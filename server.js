@@ -1,5 +1,7 @@
 import "dotenv/config";
+
 import { prepareOpportunity } from "./src/services/preparationService.js";
+
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -21,10 +23,14 @@ import {
 
 const app = express();
 
-const PORT = process.env.PORT || 10000;
+const PORT =
+  process.env.PORT || 10000;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename =
+  fileURLToPath(import.meta.url);
+
+const __dirname =
+  path.dirname(__filename);
 
 // =====================================
 // MIDDLEWARE
@@ -42,13 +48,15 @@ app.use(
 // SUPABASE
 // =====================================
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
 
 const SUPABASE_SECRET_KEY =
   process.env.SUPABASE_SECRET_KEY;
 
 const supabase =
-  SUPABASE_URL && SUPABASE_SECRET_KEY
+  SUPABASE_URL &&
+  SUPABASE_SECRET_KEY
     ? createClient(
         SUPABASE_URL,
         SUPABASE_SECRET_KEY
@@ -56,37 +64,149 @@ const supabase =
     : null;
 
 // =====================================
+// HELPERS
+// =====================================
+
+function isValidUuid(value) {
+  if (
+    typeof value !== "string"
+  ) {
+    return false;
+  }
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function normalizeOpportunityForDatabase(
+  opportunity,
+  userProfile = {}
+) {
+  return {
+    owner_id:
+      userProfile.ownerId ||
+      null,
+
+    type:
+      opportunity.type ||
+      "remote_job",
+
+    title:
+      opportunity.title ||
+      "Untitled Opportunity",
+
+    description:
+      opportunity.description ||
+      "",
+
+    company:
+      opportunity.company ||
+      "",
+
+    url:
+      opportunity.url ||
+      "",
+
+    payment:
+      opportunity.payment ??
+      null,
+
+    currency:
+      opportunity.currency ||
+      "",
+
+    remote:
+      opportunity.remote ??
+      true,
+
+    skills:
+      opportunity.skills ||
+      "",
+
+    deadline:
+      opportunity.deadline ||
+      null,
+
+    source:
+      opportunity.source ||
+      "approved_source",
+
+    source_external_id:
+      opportunity.id ||
+      opportunity.source_external_id ||
+      null,
+
+    match_score:
+      opportunity.aiAnalysis
+        ?.fitScore ??
+      opportunity.matchScore ??
+      null,
+
+    opportunity_score:
+      opportunity.opportunityScore ??
+      null,
+
+    ai_analysis:
+      opportunity.aiAnalysis ||
+      opportunity.ai_analysis ||
+      null,
+
+    status:
+      opportunity.status ||
+      "NEW"
+  };
+}
+
+// =====================================
 // API HEALTH
 // =====================================
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "OpportunityAI",
-    status: "online",
-    supabase: Boolean(supabase),
-    ai: Boolean(process.env.GEMINI_API_KEY)
-  });
-});
+app.get(
+  "/api/health",
+  (req, res) => {
+    res.json({
+      success: true,
+      service: "OpportunityAI",
+      status: "online",
+      supabase:
+        Boolean(supabase),
+      ai:
+        Boolean(
+          process.env.GEMINI_API_KEY
+        )
+    });
+  }
+);
 
 // =====================================
 // API ROOT
 // =====================================
 
-app.get("/api", (req, res) => {
-  res.json({
-    success: true,
-    service: "OpportunityAI API",
-    version: "1.0.0",
-    capabilities: [
-      "opportunity-discovery",
-      "ai-analysis",
-      "opportunity-matching",
-      "opportunity-ranking",
-      "supabase-storage"
-    ]
-  });
-});
+app.get(
+  "/api",
+  (req, res) => {
+    res.json({
+      success: true,
+
+      service:
+        "OpportunityAI API",
+
+      version:
+        "1.0.0",
+
+      capabilities: [
+        "opportunity-discovery",
+        "ai-analysis",
+        "opportunity-matching",
+        "opportunity-ranking",
+        "opportunity-preparation",
+        "supabase-storage",
+        "automation-runs"
+      ]
+    });
+  }
+);
 
 // =====================================
 // GET OPPORTUNITIES
@@ -104,10 +224,13 @@ app.get(
         });
       }
 
-      const limit = Math.min(
-        Number(req.query.limit) || 100,
-        100
-      );
+      const limit =
+        Math.min(
+          Number(
+            req.query.limit
+          ) || 100,
+          100
+        );
 
       const {
         data,
@@ -115,9 +238,12 @@ app.get(
       } = await supabase
         .from("opportunities")
         .select("*")
-        .order("created_at", {
-          ascending: false
-        })
+        .order(
+          "created_at",
+          {
+            ascending: false
+          }
+        )
         .limit(limit);
 
       if (error) {
@@ -126,9 +252,14 @@ app.get(
 
       return res.json({
         success: true,
-        count: data?.length || 0,
-        opportunities: data || []
+
+        count:
+          data?.length || 0,
+
+        opportunities:
+          data || []
       });
+
     } catch (error) {
       console.error(
         "Get opportunities error:",
@@ -137,7 +268,8 @@ app.get(
 
       return res.status(500).json({
         success: false,
-        message: error.message
+        message:
+          error.message
       });
     }
   }
@@ -159,7 +291,8 @@ app.post(
         });
       }
 
-      const opportunity = req.body;
+      const opportunity =
+        req.body;
 
       if (
         !opportunity ||
@@ -174,7 +307,8 @@ app.post(
 
       const allowedFields = {
         owner_id:
-          opportunity.owner_id || null,
+          opportunity.owner_id ||
+          null,
 
         type:
           opportunity.type ||
@@ -184,48 +318,60 @@ app.post(
           opportunity.title,
 
         description:
-          opportunity.description || "",
+          opportunity.description ||
+          "",
 
         company:
-          opportunity.company || "",
+          opportunity.company ||
+          "",
 
         url:
-          opportunity.url || "",
+          opportunity.url ||
+          "",
 
         payment:
-          opportunity.payment ?? null,
+          opportunity.payment ??
+          null,
 
         currency:
-          opportunity.currency || "",
+          opportunity.currency ||
+          "",
 
         remote:
-          opportunity.remote ?? true,
+          opportunity.remote ??
+          true,
 
         skills:
-          opportunity.skills || "",
+          opportunity.skills ||
+          "",
 
         deadline:
-          opportunity.deadline || null,
+          opportunity.deadline ||
+          null,
 
         source:
-          opportunity.source || "manual",
+          opportunity.source ||
+          "manual",
 
         source_external_id:
           opportunity.source_external_id ||
           null,
 
         match_score:
-          opportunity.match_score ?? null,
+          opportunity.match_score ??
+          null,
 
         opportunity_score:
           opportunity.opportunity_score ??
           null,
 
         ai_analysis:
-          opportunity.ai_analysis || null,
+          opportunity.ai_analysis ||
+          null,
 
         status:
-          opportunity.status || "NEW"
+          opportunity.status ||
+          "NEW"
       };
 
       const {
@@ -233,7 +379,9 @@ app.post(
         error
       } = await supabase
         .from("opportunities")
-        .insert(allowedFields)
+        .insert(
+          allowedFields
+        )
         .select()
         .single();
 
@@ -243,8 +391,10 @@ app.post(
 
       return res.status(201).json({
         success: true,
-        opportunity: data
+        opportunity:
+          data
       });
+
     } catch (error) {
       console.error(
         "Create opportunity error:",
@@ -253,7 +403,8 @@ app.post(
 
       return res.status(500).json({
         success: false,
-        message: error.message
+        message:
+          error.message
       });
     }
   }
@@ -275,35 +426,100 @@ app.post(
         });
       }
 
-      const { id } = req.params;
+      const {
+        id
+      } = req.params;
 
       const {
         userProfile = {}
-      } = req.body || {};
+      } =
+        req.body || {};
 
-      const {
-        data: opportunity,
-        error: fetchError
-      } = await supabase
-        .from("opportunities")
-        .select("*")
-        .eq("id", id)
-        .single();
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Opportunity ID is required."
+        });
+      }
 
-      if (fetchError) {
-        if (
-          fetchError.code ===
-          "PGRST116"
-        ) {
-          return res.status(404).json({
-            success: false,
-            message:
-              "Opportunity not found."
-          });
+      // ---------------------------------
+      // FIND OPPORTUNITY
+      // ---------------------------------
+
+      let opportunity = null;
+
+      // ---------------------------------
+      // OPTION 1:
+      // SUPABASE UUID
+      // ---------------------------------
+
+      if (
+        isValidUuid(id)
+      ) {
+        const {
+          data,
+          error
+        } = await supabase
+          .from("opportunities")
+          .select("*")
+          .eq(
+            "id",
+            id
+          )
+          .maybeSingle();
+
+        if (error) {
+          throw error;
         }
 
-        throw fetchError;
+        opportunity =
+          data || null;
       }
+
+      // ---------------------------------
+      // OPTION 2:
+      // EXTERNAL SOURCE ID
+      // ---------------------------------
+
+      if (!opportunity) {
+        const {
+          data,
+          error
+        } = await supabase
+          .from("opportunities")
+          .select("*")
+          .eq(
+            "source_external_id",
+            id
+          )
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        opportunity =
+          data || null;
+      }
+
+      // ---------------------------------
+      // NOT FOUND
+      // ---------------------------------
+
+      if (!opportunity) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Opportunity not found.",
+          requestedId:
+            id
+        });
+      }
+
+      // ---------------------------------
+      // PREPARE
+      // ---------------------------------
 
       const preparation =
         prepareOpportunity(
@@ -311,17 +527,28 @@ app.post(
           userProfile
         );
 
+      // ---------------------------------
+      // UPDATE STATUS
+      // ---------------------------------
+
       const {
-        data: updatedOpportunity,
-        error: updateError
+        data:
+          updatedOpportunity,
+        error:
+          updateError
       } = await supabase
         .from("opportunities")
         .update({
-          status: "PREPARED",
+          status:
+            "PREPARED",
+
           updated_at:
             new Date().toISOString()
         })
-        .eq("id", id)
+        .eq(
+          "id",
+          opportunity.id
+        )
         .select()
         .single();
 
@@ -329,12 +556,19 @@ app.post(
         throw updateError;
       }
 
+      // ---------------------------------
+      // RESPONSE
+      // ---------------------------------
+
       return res.json({
         success: true,
+
         message:
           "Opportunity prepared successfully.",
+
         opportunity:
           updatedOpportunity,
+
         preparation
       });
 
@@ -346,8 +580,10 @@ app.post(
 
       return res.status(500).json({
         success: false,
+
         message:
           "Preparation failed.",
+
         error:
           error.message
       });
@@ -362,12 +598,14 @@ app.post(
 app.post(
   "/api/scanner/run",
   async (req, res) => {
-    const startedAt = Date.now();
+    const startedAt =
+      Date.now();
 
     // IMPORTANT:
     // Keep this outside try so the catch block
     // can update the automation run.
-    let automationRunId = null;
+    let automationRunId =
+      null;
 
     try {
       if (!supabase) {
@@ -380,9 +618,13 @@ app.post(
 
       const {
         userProfile = {},
-        sources = defaultSources,
+
+        sources =
+          defaultSources,
+
         save = true
-      } = req.body || {};
+      } =
+        req.body || {};
 
       // ---------------------------------
       // 1. START AUTOMATION RUN
@@ -391,27 +633,33 @@ app.post(
       const {
         data: runData,
         error: runError
-      } = await supabase
-        .from("automation_runs")
-        .insert({
-          owner_id:
-            userProfile.ownerId || null,
+      } =
+        await supabase
+          .from(
+            "automation_runs"
+          )
+          .insert({
+            owner_id:
+              userProfile.ownerId ||
+              null,
 
-          run_type:
-            "OPPORTUNITY_SCAN",
+            run_type:
+              "OPPORTUNITY_SCAN",
 
-          status:
-            "STARTED",
+            status:
+              "STARTED",
 
-          metadata: {
-            sourceCount:
-              Array.isArray(sources)
-                ? sources.length
-                : 0
-          }
-        })
-        .select()
-        .single();
+            metadata: {
+              sourceCount:
+                Array.isArray(
+                  sources
+                )
+                  ? sources.length
+                  : 0
+            }
+          })
+          .select()
+          .single();
 
       if (runError) {
         throw runError;
@@ -432,7 +680,9 @@ app.post(
 
       const discovered =
         await collectOpportunities(
-          Array.isArray(sources)
+          Array.isArray(
+            sources
+          )
             ? sources
             : defaultSources
         );
@@ -445,10 +695,16 @@ app.post(
       // NO RESULTS
       // ---------------------------------
 
-      if (!discovered.length) {
-        if (automationRunId) {
+      if (
+        !discovered.length
+      ) {
+        if (
+          automationRunId
+        ) {
           await supabase
-            .from("automation_runs")
+            .from(
+              "automation_runs"
+            )
             .update({
               status:
                 "COMPLETED",
@@ -462,6 +718,7 @@ app.post(
               metadata: {
                 message:
                   "Scanner completed. No opportunities were found.",
+
                 durationMs:
                   Date.now() -
                   startedAt
@@ -547,92 +804,33 @@ app.post(
       ) {
         const rows =
           ranked.map(
-            (opportunity) => ({
-              owner_id:
-                userProfile.ownerId ||
-                null,
-
-              type:
-                opportunity.type ||
-                "remote_job",
-
-              title:
-                opportunity.title ||
-                "Untitled Opportunity",
-
-              description:
-                opportunity.description ||
-                "",
-
-              company:
-                opportunity.company ||
-                "",
-
-              url:
-                opportunity.url ||
-                "",
-
-              payment:
-                opportunity.payment ??
-                null,
-
-              currency:
-                opportunity.currency ||
-                "",
-
-              remote:
-                opportunity.remote ??
-                true,
-
-              skills:
-                opportunity.skills ||
-                "",
-
-              deadline:
-                opportunity.deadline ||
-                null,
-
-              source:
-                opportunity.source ||
-                "approved_source",
-
-              source_external_id:
-                opportunity.id ||
-                null,
-
-              match_score:
-                opportunity.aiAnalysis
-                  ?.fitScore ??
-                opportunity.matchScore ??
-                null,
-
-              opportunity_score:
-                opportunity.opportunityScore ??
-                null,
-
-              ai_analysis:
-                opportunity.aiAnalysis ||
-                null,
-
-              status:
-                "NEW"
-            })
+            (opportunity) =>
+              normalizeOpportunityForDatabase(
+                opportunity,
+                userProfile
+              )
           );
 
         const {
           data: savedData,
           error: saveError
-        } = await supabase
-          .from("opportunities")
-          .insert(rows)
-          .select();
+        } =
+          await supabase
+            .from(
+              "opportunities"
+            )
+            .insert(
+              rows
+            )
+            .select();
 
         if (saveError) {
           throw saveError;
         }
 
         saved =
-          savedData || [];
+          savedData ||
+          [];
 
         console.log(
           `OpportunityAI scanner: saved ${saved.length} opportunities.`
@@ -640,42 +838,118 @@ app.post(
       }
 
       // ---------------------------------
-      // 6. COMPLETE AUTOMATION RUN
+      // 6. CONNECT SAVED DB IDs
+      //    BACK TO RANKED RESULTS
       // ---------------------------------
 
-      if (automationRunId) {
-        const {
-          error: completeError
-        } = await supabase
-          .from("automation_runs")
-          .update({
-            status:
-              "COMPLETED",
+      const savedByExternalId =
+        new Map();
 
-            items_found:
-              discovered.length,
-
-            items_processed:
-              ranked.length,
-
-            metadata: {
-              savedCount:
-                saved.length,
-
-              durationMs:
-                Date.now() -
-                startedAt
-            },
-
-            completed_at:
-              new Date().toISOString()
-          })
-          .eq(
-            "id",
-            automationRunId
+      for (
+        const savedOpportunity
+        of saved
+      ) {
+        if (
+          savedOpportunity
+            .source_external_id
+        ) {
+          savedByExternalId.set(
+            String(
+              savedOpportunity
+                .source_external_id
+            ),
+            savedOpportunity
           );
+        }
+      }
 
-        if (completeError) {
+      const opportunitiesWithDatabaseIds =
+        ranked.map(
+          (opportunity) => {
+            const savedOpportunity =
+              savedByExternalId.get(
+                String(
+                  opportunity.id ||
+                    opportunity.source_external_id ||
+                    ""
+                )
+              );
+
+            if (
+              savedOpportunity
+            ) {
+              return {
+                ...opportunity,
+
+                id:
+                  savedOpportunity.id,
+
+                databaseId:
+                  savedOpportunity.id,
+
+                source_external_id:
+                  savedOpportunity
+                    .source_external_id,
+
+                status:
+                  savedOpportunity.status
+              };
+            }
+
+            return {
+              ...opportunity,
+
+              databaseId:
+                null
+            };
+          }
+        );
+
+      // ---------------------------------
+      // 7. COMPLETE AUTOMATION RUN
+      // ---------------------------------
+
+      if (
+        automationRunId
+      ) {
+        const {
+          error:
+            completeError
+        } =
+          await supabase
+            .from(
+              "automation_runs"
+            )
+            .update({
+              status:
+                "COMPLETED",
+
+              items_found:
+                discovered.length,
+
+              items_processed:
+                ranked.length,
+
+              metadata: {
+                savedCount:
+                  saved.length,
+
+                durationMs:
+                  Date.now() -
+                  startedAt
+              },
+
+              completed_at:
+                new Date().toISOString()
+            })
+            .eq(
+              "id",
+              automationRunId
+            );
+
+        if (
+          completeError
+        ) {
           console.error(
             "Failed to complete automation run:",
             completeError.message
@@ -684,7 +958,7 @@ app.post(
       }
 
       // ---------------------------------
-      // 7. RESPONSE
+      // 8. RESPONSE
       // ---------------------------------
 
       return res.json({
@@ -706,7 +980,7 @@ app.post(
           saved.length,
 
         opportunities:
-          ranked,
+          opportunitiesWithDatabaseIds,
 
         durationMs:
           Date.now() -
@@ -729,34 +1003,41 @@ app.post(
       ) {
         try {
           const {
-            error: updateError
-          } = await supabase
-            .from("automation_runs")
-            .update({
-              status:
-                "FAILED",
+            error:
+              updateError
+          } =
+            await supabase
+              .from(
+                "automation_runs"
+              )
+              .update({
+                status:
+                  "FAILED",
 
-              error_message:
-                error.message ||
-                "Unknown scanner error",
+                error_message:
+                  error.message ||
+                  "Unknown scanner error",
 
-              completed_at:
-                new Date().toISOString(),
+                completed_at:
+                  new Date().toISOString(),
 
-              metadata: {
-                durationMs:
-                  Date.now() -
-                  startedAt,
+                metadata: {
+                  durationMs:
+                    Date.now() -
+                    startedAt,
 
-                failed: true
-              }
-            })
-            .eq(
-              "id",
-              automationRunId
-            );
+                  failed:
+                    true
+                }
+              })
+              .eq(
+                "id",
+                automationRunId
+              );
 
-          if (updateError) {
+          if (
+            updateError
+          ) {
             console.error(
               "Failed to update automation run:",
               updateError.message
@@ -810,13 +1091,19 @@ app.get(
       const {
         data,
         error
-      } = await supabase
-        .from("automation_runs")
-        .select("*")
-        .order("created_at", {
-          ascending: false
-        })
-        .limit(20);
+      } =
+        await supabase
+          .from(
+            "automation_runs"
+          )
+          .select("*")
+          .order(
+            "created_at",
+            {
+              ascending: false
+            }
+          )
+          .limit(20);
 
       if (error) {
         throw error;
@@ -824,6 +1111,7 @@ app.get(
 
       return res.json({
         success: true,
+
         runs:
           data || []
       });
@@ -836,6 +1124,7 @@ app.get(
 
       return res.status(500).json({
         success: false,
+
         message:
           error.message
       });
@@ -891,6 +1180,7 @@ app.use(
   (req, res) => {
     res.status(404).json({
       success: false,
+
       message:
         "Route not found."
     });
@@ -915,6 +1205,7 @@ app.use(
 
     res.status(500).json({
       success: false,
+
       message:
         "Internal server error."
     });
