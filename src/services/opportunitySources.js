@@ -1,15 +1,15 @@
 /**
- * Opportunity Sources
+ * OpportunityAI — Opportunity Sources
  *
- * This layer is responsible for collecting opportunities from
- * legitimate, permitted sources.
+ * Collects opportunities from legitimate, permitted sources.
  *
- * IMPORTANT:
- * - Do not scrape sites that prohibit automated access.
- * - Prefer official APIs, RSS feeds, public datasets, or
- *   user-authorized integrations.
- * - Every returned item is normalized before entering the
- *   OpportunityAI ranking engine.
+ * Supported source types:
+ * - Official JSON APIs
+ * - RSS / Atom feeds
+ * - Public datasets
+ * - User-authorized integrations
+ *
+ * No unauthorized scraping.
  */
 
 import {
@@ -18,70 +18,82 @@ import {
 } from "./opportunityEngine.js";
 
 /**
- * Normalize a raw opportunity from any supported source.
+ * Normalize a raw opportunity into the OpportunityAI format.
  */
-export function normalizeOpportunity(raw, type) {
+export function normalizeOpportunity(raw = {}, type) {
   return createOpportunity({
-    id: raw.id || raw.guid || raw.url,
+    id:
+      raw.id ||
+      raw.guid ||
+      raw.external_id ||
+      raw.url ||
+      undefined,
 
     type,
 
     title:
       raw.title ||
       raw.name ||
+      raw.position ||
       "Untitled opportunity",
 
     description:
       raw.description ||
       raw.summary ||
+      raw.snippet ||
       "",
 
     company:
       raw.company ||
       raw.organization ||
       raw.employer ||
+      raw.company_name ||
       "",
 
     url:
       raw.url ||
       raw.link ||
+      raw.apply_url ||
       "",
 
     payment:
-      raw.payment ||
-      raw.salary ||
-      raw.budget ||
+      raw.payment ??
+      raw.salary ??
+      raw.budget ??
+      raw.compensation ??
       null,
 
     currency:
       raw.currency ||
+      raw.salary_currency ||
       "",
 
     remote:
       raw.remote ??
+      raw.is_remote ??
       true,
 
     skills:
       raw.skills ||
       raw.tags ||
+      raw.keywords ||
       "",
 
     deadline:
       raw.deadline ||
       raw.closingDate ||
+      raw.closing_date ||
       null,
 
     source:
       raw.source ||
+      raw.source_name ||
       "approved_source"
   });
 }
 
 /**
- * Fetch opportunities from a JSON API.
- *
- * The actual endpoint is intentionally supplied through
- * configuration instead of hard-coding a third-party website.
+ * Fetch JSON from an approved API.
  */
 export async function fetchJsonSource({
   url,
@@ -110,7 +122,13 @@ export async function fetchJsonSource({
 
   const records = Array.isArray(data)
     ? data
-    : data.items || data.results || data.data || [];
+    : Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.results)
+    ? data.results
+    : Array.isArray(data.data)
+    ? data.data
+    : [];
 
   return records.map((item) =>
     normalizeOpportunity(item, type)
@@ -118,10 +136,9 @@ export async function fetchJsonSource({
 }
 
 /**
- * Fetch an RSS/Atom feed.
+ * Fetch RSS or Atom feed.
  *
- * XML parsing is kept separate so the backend can use a proper
- * XML parser when this source type is enabled.
+ * XML parsing can be added with a dedicated parser.
  */
 export async function fetchFeedSource({
   url,
@@ -131,7 +148,13 @@ export async function fetchFeedSource({
     throw new Error("Feed URL is required.");
   }
 
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept:
+        "application/rss+xml, application/atom+xml, application/xml, text/xml"
+    }
+  });
 
   if (!response.ok) {
     throw new Error(
@@ -152,14 +175,19 @@ export async function fetchFeedSource({
  * Remove duplicate opportunities.
  */
 export function deduplicateOpportunities(
-  opportunities
+  opportunities = []
 ) {
   const seen = new Set();
 
   return opportunities.filter((item) => {
     const key =
       item.url ||
+      item.id ||
       `${item.title}-${item.company}`;
+
+    if (!key) {
+      return true;
+    }
 
     if (seen.has(key)) {
       return false;
@@ -172,11 +200,7 @@ export function deduplicateOpportunities(
 }
 
 /**
- * Main source collector.
- *
- * Sources are passed into this function by the backend.
- * This makes it possible to add or remove sources without
- * changing the ranking engine.
+ * Collect opportunities from configured sources.
  */
 export async function collectOpportunities(
   sources = []
@@ -185,11 +209,15 @@ export async function collectOpportunities(
 
   for (const source of sources) {
     try {
+      if (!source || !source.url) {
+        continue;
+      }
+
       if (source.kind === "json") {
         const items = await fetchJsonSource({
           url: source.url,
           type: source.type,
-          headers: source.headers
+          headers: source.headers || {}
         });
 
         collected.push(...items);
@@ -201,7 +229,15 @@ export async function collectOpportunities(
           type: source.type
         });
 
-        collected.push(result);
+        /*
+         * XML is intentionally not converted into
+         * fake opportunities here.
+         */
+        if (result.xml) {
+          console.log(
+            `Feed received from ${source.name || source.url}`
+          );
+        }
       }
     } catch (error) {
       console.error(
@@ -217,10 +253,10 @@ export async function collectOpportunities(
 }
 
 /**
- * Example source configuration.
+ * Source configuration.
  *
- * Keep URLs empty until an approved/official source
- * is configured.
+ * URLs remain empty until an approved source
+ * is intentionally configured.
  */
 export const defaultSources = [
   {
