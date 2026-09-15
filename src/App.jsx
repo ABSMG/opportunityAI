@@ -200,7 +200,9 @@ function App() {
       try {
         const response =
           await fetch(
-            `${API_BASE}/api/opportunities/${opportunity.id}/prepare`,
+            `${API_BASE}/api/opportunities/${encodeURIComponent(
+              opportunity.id
+            )}/prepare`,
             {
               method: "POST",
 
@@ -250,6 +252,10 @@ function App() {
                     }
                   : item
             )
+        );
+
+        setScanMessage(
+          "Opportunity prepared successfully."
         );
 
       } catch (err) {
@@ -480,6 +486,7 @@ function App() {
               {scanning && (
                 <div className="scanner-progress">
                   <div className="spinner" />
+
                   <span>
                     Fetching → Analyzing →
                     Matching → Ranking →
@@ -532,6 +539,7 @@ function App() {
                     >
 
                       <div className="workflow-step">
+
                         <span>
                           {index + 1}
                         </span>
@@ -539,6 +547,7 @@ function App() {
                         <strong>
                           {step}
                         </strong>
+
                       </div>
 
                       {index <
@@ -563,6 +572,7 @@ function App() {
             <section className="channels">
 
               <div className="channel-card">
+
                 <div className="channel-icon">
                   💼
                 </div>
@@ -576,9 +586,11 @@ function App() {
                   remote employment
                   opportunities.
                 </p>
+
               </div>
 
               <div className="channel-card">
+
                 <div className="channel-icon">
                   🛠️
                 </div>
@@ -591,9 +603,11 @@ function App() {
                   Find freelance projects
                   matching your skills.
                 </p>
+
               </div>
 
               <div className="channel-card">
+
                 <div className="channel-icon">
                   🎯
                 </div>
@@ -607,6 +621,7 @@ function App() {
                   customers for legitimate
                   outreach.
                 </p>
+
               </div>
 
             </section>
@@ -623,7 +638,9 @@ function App() {
           <section>
 
             <div className="page-heading">
+
               <div>
+
                 <div className="section-label">
                   OPPORTUNITY DATABASE
                 </div>
@@ -631,6 +648,7 @@ function App() {
                 <h2>
                   Recommended Opportunities
                 </h2>
+
               </div>
 
               <button
@@ -642,6 +660,7 @@ function App() {
                   ? "Scanning..."
                   : "🔎 Scan Now"}
               </button>
+
             </div>
 
             {opportunities.length ===
@@ -708,6 +727,7 @@ function App() {
                       <div className="opportunity-top">
 
                         <div>
+
                           <span className="opportunity-type">
                             {String(
                               opportunity.type ||
@@ -728,6 +748,7 @@ function App() {
                               {opportunity.company}
                             </p>
                           )}
+
                         </div>
 
                         <span
@@ -890,11 +911,15 @@ function App() {
             </p>
 
             <div className="automation-note">
+
               Messages will remain
+
               <strong>
                 {" "}READY FOR REVIEW
               </strong>
+
               until you approve them.
+
             </div>
 
           </section>
@@ -933,6 +958,7 @@ function App() {
                 <strong>
                   0
                 </strong>
+
                 <span>
                   Prepared
                 </span>
@@ -942,6 +968,7 @@ function App() {
                 <strong>
                   0
                 </strong>
+
                 <span>
                   Applied
                 </span>
@@ -951,6 +978,7 @@ function App() {
                 <strong>
                   0
                 </strong>
+
                 <span>
                   Interviews
                 </span>
@@ -960,6 +988,7 @@ function App() {
                 <strong>
                   0
                 </strong>
+
                 <span>
                   Offers
                 </span>
@@ -998,6 +1027,7 @@ function App() {
             <div className="modal-header">
 
               <div>
+
                 <div className="section-label">
                   AI PREPARATION
                 </div>
@@ -1005,8 +1035,11 @@ function App() {
                 <h2>
                   {preparing
                     ? "Preparing Opportunity..."
-                    : "Preparation Complete"}
+                    : preparation
+                    ? "Preparation Complete"
+                    : "Preparation Error"}
                 </h2>
+
               </div>
 
               {!preparing && (
@@ -1295,6 +1328,10 @@ function App() {
                       ?.applicationText && (
                       <div className="proposal-box">
 
+                        <div className="section-label">
+                          APPLICATION TEXT
+                        </div>
+
                         <p>
                           {
                             preparation
@@ -1321,6 +1358,86 @@ function App() {
                               .coverLetter
                           }
                         </p>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.customer && (
+                      <div className="detail-row">
+
+                        <span>
+                          Customer
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .customer
+                          }
+                        </strong>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.opportunityTitle && (
+                      <div className="detail-row">
+
+                        <span>
+                          Opportunity
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .opportunityTitle
+                          }
+                        </strong>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.opportunityUrl && (
+                      <div className="detail-row">
+
+                        <span>
+                          Opportunity Link
+                        </span>
+
+                        <a
+                          href={
+                            preparation
+                              .package
+                              .opportunityUrl
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Opportunity
+                        </a>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.outreachStatus && (
+                      <div className="detail-row">
+
+                        <span>
+                          Outreach Status
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .outreachStatus
+                          }
+                        </strong>
 
                       </div>
                     )}
@@ -1402,6 +1519,10 @@ function App() {
                   </div>
                 )}
 
+                {/* ======================== */}
+                {/* REVIEW NOTICE */}
+                {/* ======================== */}
+
                 <div className="review-notice">
 
                   <strong>
@@ -1417,6 +1538,10 @@ function App() {
                   </p>
 
                 </div>
+
+                {/* ======================== */}
+                {/* MODAL ACTIONS */}
+                {/* ======================== */}
 
                 <div className="modal-actions">
 
@@ -1457,6 +1582,7 @@ function App() {
       {/* ================================= */}
 
       <footer className="footer">
+
         <strong>
           OpportunityAI
         </strong>
@@ -1465,6 +1591,7 @@ function App() {
           Find • Analyze • Match •
           Prepare • Track
         </span>
+
       </footer>
 
       {/* ================================= */}
