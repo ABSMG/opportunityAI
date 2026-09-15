@@ -3,12 +3,14 @@
  *
  * Collects opportunities from legitimate, permitted sources.
  *
- * Supported:
+ * Features:
  * - Official JSON APIs
  * - Public job-board APIs
  * - RSS / Atom feeds
- * - Public datasets
- * - User-authorized integrations
+ * - Per-source timeout
+ * - Parallel source scanning
+ * - Failed sources do not stop the scanner
+ * - Deduplication
  *
  * No unauthorized scraping.
  */
@@ -17,6 +19,9 @@ import {
   createOpportunity,
   OPPORTUNITY_TYPES
 } from "./opportunityEngine.js";
+
+const SOURCE_TIMEOUT_MS = 12000;
+const MAX_ITEMS_PER_SOURCE = 100;
 
 // =====================================
 // NORMALIZE OPPORTUNITY
@@ -53,11 +58,11 @@ export function normalizeOpportunity(
       "",
 
     company:
+      raw.company?.name ||
       raw.company ||
       raw.organization ||
       raw.employer ||
       raw.company_name ||
-      raw.company?.name ||
       "",
 
     url:
@@ -107,6 +112,39 @@ export function normalizeOpportunity(
 }
 
 // =====================================
+// FETCH WITH TIMEOUT
+// =====================================
+
+export async function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = SOURCE_TIMEOUT_MS
+) {
+  const controller = new AbortController();
+
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(
+        `Source timeout after ${timeoutMs}ms`
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// =====================================
 // FETCH JSON SOURCE
 // =====================================
 
@@ -122,15 +160,16 @@ export async function fetchJsonSource({
     );
   }
 
-  const response = await fetch(url, {
-    method: "GET",
-
-    headers: {
-      Accept:
-        "application/json",
-      ...headers
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        ...headers
+      }
     }
-  });
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -138,13 +177,7 @@ export async function fetchJsonSource({
     );
   }
 
-  const data =
-    await response.json();
-
-  /*
-   * Different APIs return arrays
-   * using different property names.
-   */
+  const data = await response.json();
 
   const records =
     Array.isArray(data)
@@ -159,14 +192,15 @@ export async function fetchJsonSource({
       ? data.data
       : [];
 
-  return records.map(
-    (item) =>
+  return records
+    .slice(0, MAX_ITEMS_PER_SOURCE)
+    .map((item) =>
       normalizeOpportunity(
         item,
         type,
         sourceName
       )
-  );
+    );
 }
 
 // =====================================
@@ -184,14 +218,16 @@ export async function fetchFeedSource({
     );
   }
 
-  const response = await fetch(url, {
-    method: "GET",
-
-    headers: {
-      Accept:
-        "application/rss+xml, application/atom+xml, application/xml, text/xml"
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Accept:
+          "application/rss+xml, application/atom+xml, application/xml, text/xml"
+      }
     }
-  });
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -199,8 +235,7 @@ export async function fetchFeedSource({
     );
   }
 
-  const xml =
-    await response.text();
+  const xml = await response.text();
 
   return {
     type,
@@ -217,8 +252,7 @@ export async function fetchFeedSource({
 export function deduplicateOpportunities(
   opportunities = []
 ) {
-  const seen =
-    new Set();
+  const seen = new Set();
 
   return opportunities.filter(
     (item) => {
@@ -243,93 +277,212 @@ export function deduplicateOpportunities(
 }
 
 // =====================================
+// SCAN ONE SOURCE
+// =====================================
+
+async function scanSource(source) {
+  if (!source || !source.url) {
+    throw new Error(
+      "Invalid opportunity source."
+    );
+  }
+
+  if (source.kind === "json") {
+    return await fetchJsonSource({
+      url: source.url,
+      type: source.type,
+      sourceName: source.name,
+      headers: source.headers || {}
+    });
+  }
+
+  if (source.kind === "feed") {
+    const result =
+      await fetchFeedSource({
+        url: source.url,
+        type: source.type,
+        sourceName: source.name
+      });
+
+    /*
+     * We intentionally do not create
+     * fake opportunities from XML.
+     *
+     * RSS parsing can be added later.
+     */
+
+    if (result.xml) {
+      console.log(
+        `Feed received from ${source.name}`
+      );
+    }
+
+    return [];
+  }
+
+  throw new Error(
+    `Unsupported source type: ${source.kind}`
+  );
+}
+
+// =====================================
 // COLLECT OPPORTUNITIES
 // =====================================
 
 export async function collectOpportunities(
   sources = []
 ) {
+  if (!Array.isArray(sources)) {
+    return [];
+  }
+
+  const validSources =
+    sources.filter(
+      (source) =>
+        source &&
+        source.url
+    );
+
+  if (!validSources.length) {
+    console.warn(
+      "No valid opportunity sources configured."
+    );
+
+    return [];
+  }
+
+  console.log(
+    `Starting opportunity scan across ${validSources.length} sources...`
+  );
+
+  /*
+   * Scan all sources in parallel.
+   *
+   * Promise.allSettled ensures that one
+   * failed source does not stop the others.
+   */
+
+  const results =
+    await Promise.allSettled(
+      validSources.map(
+        async (source) => {
+          const startedAt =
+            Date.now();
+
+          try {
+            const items =
+              await scanSource(
+                source
+              );
+
+            console.log(
+              `Source success: ${
+                source.name
+              } — ${
+                items.length
+              } opportunities — ${
+                Date.now() -
+                startedAt
+              }ms`
+            );
+
+            return {
+              source:
+                source.name ||
+                source.url,
+
+              success: true,
+
+              count:
+                items.length,
+
+              items
+            };
+          } catch (error) {
+            console.error(
+              `Source failed: ${
+                source.name ||
+                source.url
+              } — ${
+                error.message
+              }`
+            );
+
+            return {
+              source:
+                source.name ||
+                source.url,
+
+              success: false,
+
+              count: 0,
+
+              items: [],
+
+              error:
+                error.message
+            };
+          }
+        }
+      )
+    );
+
   const collected = [];
 
-  for (const source of sources) {
-    try {
-      if (
-        !source ||
-        !source.url
-      ) {
-        continue;
-      }
+  const sourceResults = [];
 
-      // -------------------------------
-      // JSON API
-      // -------------------------------
+  for (const result of results) {
+    if (
+      result.status ===
+      "fulfilled"
+    ) {
+      sourceResults.push(
+        result.value
+      );
 
       if (
-        source.kind === "json"
+        Array.isArray(
+          result.value.items
+        )
       ) {
-        const items =
-          await fetchJsonSource({
-            url: source.url,
-
-            type: source.type,
-
-            sourceName:
-              source.name,
-
-            headers:
-              source.headers || {}
-          });
-
         collected.push(
-          ...items
+          ...result.value.items
         );
       }
-
-      // -------------------------------
-      // RSS / ATOM
-      // -------------------------------
-
-      if (
-        source.kind === "feed"
-      ) {
-        const result =
-          await fetchFeedSource({
-            url: source.url,
-
-            type: source.type,
-
-            sourceName:
-              source.name
-          });
-
-        /*
-         * XML parsing will be added
-         * separately.
-         *
-         * We do not create fake
-         * opportunities from raw XML.
-         */
-
-        if (result.xml) {
-          console.log(
-            `Feed received from ${source.name}`
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        `Source error: ${
-          source.name ||
-          source.url
-        }`,
-        error.message
-      );
+    } else {
+      sourceResults.push({
+        success: false,
+        count: 0,
+        items: [],
+        error:
+          result.reason?.message ||
+          "Unknown source error"
+      });
     }
   }
 
-  return deduplicateOpportunities(
-    collected
+  const unique =
+    deduplicateOpportunities(
+      collected
+    );
+
+  console.log(
+    `Opportunity scan completed: ${unique.length} unique opportunities found.`
   );
+
+  /*
+   * Keep source information available
+   * for server-side logging/debugging.
+   */
+
+  console.log(
+    "Source results:",
+    JSON.stringify(
+      sourceResults
+    )
+  );
+
+  return unique;
 }
 
 // =====================================
@@ -408,6 +561,7 @@ export const defaultSources = [
 // =====================================
 
 export const sourceInformation = {
+
   remotive: {
     name:
       "Remotive",
