@@ -210,19 +210,58 @@ app.post(
         success: true,
         opportunity: data
       });
+    
     } catch (error) {
-      console.error(
-        "Create opportunity error:",
-        error.message
-      );
+  console.error(
+    "Scanner error:",
+    error.message
+  );
 
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+  if (supabase && automationRunId) {
+    try {
+      await supabase
+        .from("automation_runs")
+        .update({
+          status: "FAILED",
+          error_message:
+            error.message ||
+            "Unknown scanner error",
+          completed_at:
+            new Date().toISOString(),
+          metadata: {
+            durationMs:
+              Date.now() - startedAt,
+            failed: true
+          }
+        })
+        .eq("id", automationRunId);
+    } catch (updateError) {
+      console.error(
+        "Failed to update automation run:",
+        updateError.message
+      );
     }
   }
-);
+
+  return res.status(500).json({
+    success: false,
+    message:
+      "Opportunity scanner failed.",
+    error:
+      error.message
+  });
+}  
+        
+        
+      
+
+      r
+    
+
+      
+    
+
+
 
 // =====================================
 // OPPORTUNITY SCANNER
