@@ -167,10 +167,16 @@ app.get(
   (req, res) => {
     res.json({
       success: true,
-      service: "OpportunityAI",
-      status: "online",
+
+      service:
+        "OpportunityAI",
+
+      status:
+        "online",
+
       supabase:
         Boolean(supabase),
+
       ai:
         Boolean(
           process.env.GEMINI_API_KEY
@@ -201,6 +207,9 @@ app.get(
         "opportunity-matching",
         "opportunity-ranking",
         "opportunity-preparation",
+        "application-review",
+        "application-approval",
+        "application-tracking",
         "supabase-storage",
         "automation-runs"
       ]
@@ -219,6 +228,7 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -268,6 +278,7 @@ app.get(
 
       return res.status(500).json({
         success: false,
+
         message:
           error.message
       });
@@ -286,6 +297,7 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -300,6 +312,7 @@ app.post(
       ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Opportunity title is required."
         });
@@ -391,6 +404,7 @@ app.post(
 
       return res.status(201).json({
         success: true,
+
         opportunity:
           data
       });
@@ -403,6 +417,7 @@ app.post(
 
       return res.status(500).json({
         success: false,
+
         message:
           error.message
       });
@@ -416,6 +431,447 @@ app.post(
 
 app.post(
   "/api/opportunities/:id/prepare",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+
+          message:
+            "Supabase is not configured."
+        });
+      }
+
+      const {
+        id
+      } = req.params;
+
+      const {
+        userProfile = {}
+      } = req.body || {};
+
+      // ---------------------------------
+      // FIND OPPORTUNITY
+      // ---------------------------------
+
+      let opportunity =
+        null;
+
+      let findError =
+        null;
+
+      if (
+        isValidUuid(id)
+      ) {
+        const result =
+          await supabase
+            .from(
+              "opportunities"
+            )
+            .select("*")
+            .eq(
+              "id",
+              id
+            )
+            .maybeSingle();
+
+        opportunity =
+          result.data;
+
+        findError =
+          result.error;
+      } else {
+        const result =
+          await supabase
+            .from(
+              "opportunities"
+            )
+            .select("*")
+            .eq(
+              "source_external_id",
+              id
+            )
+            .maybeSingle();
+
+        opportunity =
+          result.data;
+
+        findError =
+          result.error;
+      }
+
+      if (findError) {
+        throw findError;
+      }
+
+      if (!opportunity) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Opportunity not found."
+        });
+      }
+
+      // ---------------------------------
+      // PREPARE WITH AI
+      // ---------------------------------
+
+      const preparation =
+        await prepareOpportunity(
+          opportunity,
+          userProfile
+        );
+
+      // ---------------------------------
+      // SAVE APPLICATION
+      // ---------------------------------
+
+      let savedPreparation =
+        null;
+
+      if (
+        opportunity.type ===
+          "remote_job" ||
+        opportunity.type ===
+          "freelance"
+      ) {
+        const packageData =
+          preparation.package ||
+          {};
+
+        const proposal =
+          packageData.proposal ||
+          "";
+
+        const notes =
+          JSON.stringify({
+            preparation,
+            preparedAt:
+              new Date().toISOString()
+          });
+
+        // Check whether an
+        // application already exists.
+        const {
+          data:
+            existingApplication,
+          error:
+            existingError
+        } = await supabase
+          .from(
+            "applications"
+          )
+          .select("*")
+          .eq(
+            "opportunity_id",
+            opportunity.id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false
+            }
+          )
+          .limit(1)
+          .maybeSingle();
+
+        if (existingError) {
+          throw existingError;
+        }
+
+        if (
+          existingApplication
+        ) {
+          const {
+            data:
+              updatedApplication,
+            error:
+              updateError
+          } = await supabase
+            .from(
+              "applications"
+            )
+            .update({
+              proposal,
+
+              notes,
+
+              deadline:
+                opportunity.deadline ||
+                null,
+
+              status:
+                "READY_FOR_REVIEW",
+
+              updated_at:
+                new Date().toISOString()
+            })
+            .eq(
+              "id",
+              existingApplication.id
+            )
+            .select()
+            .single();
+
+          if (updateError) {
+            throw updateError;
+          }
+
+          savedPreparation =
+            updatedApplication;
+
+        } else {
+          const {
+            data:
+              createdApplication,
+            error:
+              createError
+          } = await supabase
+            .from(
+              "applications"
+            )
+            .insert({
+              owner_id:
+                userProfile.ownerId ||
+                null,
+
+              opportunity_id:
+                opportunity.id,
+
+              status:
+                "READY_FOR_REVIEW",
+
+              proposal,
+
+              notes,
+
+              deadline:
+                opportunity.deadline ||
+                null
+            })
+            .select()
+            .single();
+
+          if (createError) {
+            throw createError;
+          }
+
+          savedPreparation =
+            createdApplication;
+        }
+      }
+
+      // ---------------------------------
+      // SAVE CUSTOMER OUTREACH
+      // ---------------------------------
+
+      if (
+        opportunity.type ===
+        "customer"
+      ) {
+        const packageData =
+          preparation.package ||
+          {};
+
+        const outreach =
+          packageData.outreach ||
+          {};
+
+        const message =
+          outreach.message ||
+          {};
+
+        const {
+          data:
+            existingMessage,
+          error:
+            existingMessageError
+        } = await supabase
+          .from(
+            "outreach_messages"
+          )
+          .select("*")
+          .eq(
+            "opportunity_id",
+            opportunity.id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false
+            }
+          )
+          .limit(1)
+          .maybeSingle();
+
+        if (
+          existingMessageError
+        ) {
+          throw existingMessageError;
+        }
+
+        const outreachData = {
+          owner_id:
+            userProfile.ownerId ||
+            null,
+
+          opportunity_id:
+            opportunity.id,
+
+          channel:
+            outreach.channel ||
+            "manual",
+
+          subject:
+            message.subject ||
+            "",
+
+          body:
+            message.body ||
+            "",
+
+          status:
+            "READY_FOR_REVIEW",
+
+          user_approved:
+            false,
+
+          platform_allows_automation:
+            false
+        };
+
+        if (
+          existingMessage
+        ) {
+          const {
+            data:
+              updatedMessage,
+            error:
+              updateMessageError
+          } = await supabase
+            .from(
+              "outreach_messages"
+            )
+            .update(
+              outreachData
+            )
+            .eq(
+              "id",
+              existingMessage.id
+            )
+            .select()
+            .single();
+
+          if (
+            updateMessageError
+          ) {
+            throw updateMessageError;
+          }
+
+          savedPreparation =
+            updatedMessage;
+
+        } else {
+          const {
+            data:
+              createdMessage,
+            error:
+              createMessageError
+          } = await supabase
+            .from(
+              "outreach_messages"
+            )
+            .insert(
+              outreachData
+            )
+            .select()
+            .single();
+
+          if (
+            createMessageError
+          ) {
+            throw createMessageError;
+          }
+
+          savedPreparation =
+            createdMessage;
+        }
+      }
+
+      // ---------------------------------
+      // UPDATE OPPORTUNITY
+      // ---------------------------------
+
+      const {
+        data:
+          updatedOpportunity,
+        error:
+          opportunityUpdateError
+      } = await supabase
+        .from(
+          "opportunities"
+        )
+        .update({
+          status:
+            "PREPARED",
+
+          updated_at:
+            new Date().toISOString()
+        })
+        .eq(
+          "id",
+          opportunity.id
+        )
+        .select()
+        .single();
+
+      if (
+        opportunityUpdateError
+      ) {
+        throw opportunityUpdateError;
+      }
+
+      // ---------------------------------
+      // RESPONSE
+      // ---------------------------------
+
+      return res.json({
+        success: true,
+
+        message:
+          "Opportunity prepared successfully and is ready for review.",
+
+        opportunity:
+          updatedOpportunity,
+
+        preparation,
+
+        savedPreparation,
+
+        nextAction:
+          "Review the prepared application before approval."
+      });
+
+    } catch (error) {
+      console.error(
+        "Prepare opportunity error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Opportunity preparation failed.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
 // =====================================
 // APPLICATIONS - REVIEW
 // =====================================
@@ -427,6 +883,7 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -436,7 +893,9 @@ app.get(
         data,
         error
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .select(`
           *,
           opportunities (
@@ -466,8 +925,10 @@ app.get(
 
       return res.json({
         success: true,
+
         count:
           data?.length || 0,
+
         applications:
           data || []
       });
@@ -480,13 +941,13 @@ app.get(
 
       return res.status(500).json({
         success: false,
+
         message:
           error.message
       });
     }
   }
 );
-
 
 // =====================================
 // APPLICATION - GET ONE
@@ -499,6 +960,7 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -508,9 +970,12 @@ app.get(
         id
       } = req.params;
 
-      if (!isValidUuid(id)) {
+      if (
+        !isValidUuid(id)
+      ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Invalid application ID."
         });
@@ -520,7 +985,9 @@ app.get(
         data,
         error
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .select(`
           *,
           opportunities (
@@ -550,6 +1017,7 @@ app.get(
       if (!data) {
         return res.status(404).json({
           success: false,
+
           message:
             "Application not found."
         });
@@ -557,6 +1025,7 @@ app.get(
 
       return res.json({
         success: true,
+
         application:
           data
       });
@@ -569,13 +1038,13 @@ app.get(
 
       return res.status(500).json({
         success: false,
+
         message:
           error.message
       });
     }
   }
 );
-
 
 // =====================================
 // APPLICATION - APPROVE
@@ -588,6 +1057,7 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -597,9 +1067,12 @@ app.post(
         id
       } = req.params;
 
-      if (!isValidUuid(id)) {
+      if (
+        !isValidUuid(id)
+      ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Invalid application ID."
         });
@@ -615,7 +1088,9 @@ app.post(
         error:
           findError
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .select("*")
         .eq(
           "id",
@@ -630,6 +1105,7 @@ app.post(
       if (!application) {
         return res.status(404).json({
           success: false,
+
           message:
             "Application not found."
         });
@@ -645,8 +1121,10 @@ app.post(
       ) {
         return res.status(409).json({
           success: false,
+
           message:
             "Only READY_FOR_REVIEW applications can be approved.",
+
           currentStatus:
             application.status
         });
@@ -662,7 +1140,9 @@ app.post(
         error:
           updateError
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .update({
           status:
             "APPROVED",
@@ -691,7 +1171,7 @@ app.post(
           approvedApplication,
 
         nextAction:
-          "The user can now manually submit the application through the permitted platform."
+          "Manually submit the application through the permitted platform, then mark it as APPLIED."
       });
 
     } catch (error) {
@@ -713,7 +1193,6 @@ app.post(
   }
 );
 
-
 // =====================================
 // APPLICATION - MARK AS APPLIED
 // =====================================
@@ -725,6 +1204,7 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -734,9 +1214,12 @@ app.post(
         id
       } = req.params;
 
-      if (!isValidUuid(id)) {
+      if (
+        !isValidUuid(id)
+      ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Invalid application ID."
         });
@@ -752,7 +1235,9 @@ app.post(
         error:
           findError
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .select(`
           *,
           opportunities (
@@ -776,6 +1261,7 @@ app.post(
       if (!application) {
         return res.status(404).json({
           success: false,
+
           message:
             "Application not found."
         });
@@ -810,7 +1296,9 @@ app.post(
         error:
           updateApplicationError
       } = await supabase
-        .from("applications")
+        .from(
+          "applications"
+        )
         .update({
           status:
             "APPLIED",
@@ -850,7 +1338,9 @@ app.post(
           error:
             opportunityError
         } = await supabase
-          .from("opportunities")
+          .from(
+            "opportunities"
+          )
           .update({
             status:
               "APPLIED",
@@ -874,10 +1364,6 @@ app.post(
         updatedOpportunity =
           opportunityData;
       }
-
-      // ---------------------------------
-      // RESPONSE
-      // ---------------------------------
 
       return res.json({
         success: true,
@@ -912,23 +1398,7 @@ app.post(
       });
     }
   }
-);  
-
-      
-
-     
-   
-
-
-  
-
-        
-          
-    
-    
-      
-    
-
+);
 
 // =====================================
 // OPPORTUNITY SCANNER
@@ -940,9 +1410,6 @@ app.post(
     const startedAt =
       Date.now();
 
-    // IMPORTANT:
-    // Keep this outside try so the catch block
-    // can update the automation run.
     let automationRunId =
       null;
 
@@ -950,6 +1417,7 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
@@ -1422,6 +1890,7 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
+
           message:
             "Supabase is not configured."
         });
