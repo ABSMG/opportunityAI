@@ -1,4 +1,4 @@
-preparation import {
+ import {
   collectOpportunities,
   defaultSources
 } from "./opportunitySources.js";
