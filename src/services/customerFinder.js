@@ -11,6 +11,10 @@ import {
   OPPORTUNITY_TYPES
 } from "./opportunityEngine.js";
 
+import {
+  prepareOutreach
+} from "./outreachManager.js";
+
 /**
  * Discover potential customers from approved
  * business/lead sources.
@@ -66,18 +70,34 @@ export function getHighPriorityCustomers(
 }
 
 /**
- * Prepare a customer outreach package.
+ * Prepare a complete customer outreach package.
+ *
+ * This does NOT send anything automatically.
+ * It creates a message that must be reviewed
+ * and approved by the user first.
  */
 export function prepareCustomerOutreach(
   customer,
-  userProfile
+  userProfile,
+  channel = "manual"
 ) {
   if (!customer) {
     throw new Error("Customer is required.");
   }
 
+  const outreach =
+    prepareOutreach({
+      customer,
+      userProfile,
+      channel,
+      service:
+        userProfile.primaryService ||
+        "Professional digital service"
+    });
+
   return {
-    customerId: customer.id,
+    customerId:
+      customer.id,
 
     businessName:
       customer.company ||
@@ -92,17 +112,23 @@ export function prepareCustomerOutreach(
       "Professional digital service",
 
     sender: {
-      name: userProfile.name || "",
-      skills: userProfile.skills || [],
+      name:
+        userProfile.name || "",
+
+      skills:
+        userProfile.skills || [],
+
       portfolio:
         userProfile.portfolio || ""
     },
+
+    outreach,
 
     outreachStatus:
       "READY_FOR_REVIEW",
 
     nextAction:
-      "Review the message before sending."
+      "Review the message and approve it before sending."
   };
 }
 
