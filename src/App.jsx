@@ -41,6 +41,26 @@ function App() {
   const [error, setError] =
     useState("");
 
+  /* ================================= */
+  /* PREPARATION WORKFLOW */
+  /* ================================= */
+
+  const [preparing, setPreparing] =
+    useState(false);
+
+  const [preparation, setPreparation] =
+    useState(null);
+
+  const [preparationError, setPreparationError] =
+    useState("");
+
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState(null);
+
+  /* ================================= */
+  /* SCANNER */
+  /* ================================= */
+
   const runScanner = async () => {
     setScanning(true);
     setError("");
@@ -109,6 +129,10 @@ function App() {
     }
   };
 
+  /* ================================= */
+  /* LOAD SAVED OPPORTUNITIES */
+  /* ================================= */
+
   const loadSavedOpportunities =
     async () => {
       setError("");
@@ -152,6 +176,118 @@ function App() {
       }
     };
 
+  /* ================================= */
+  /* PREPARE OPPORTUNITY */
+  /* ================================= */
+
+  const prepareSelectedOpportunity =
+    async (opportunity) => {
+      if (!opportunity?.id) {
+        setPreparationError(
+          "This opportunity does not have a valid ID."
+        );
+
+        return;
+      }
+
+      setPreparing(true);
+      setPreparation(null);
+      setPreparationError("");
+      setSelectedOpportunity(
+        opportunity
+      );
+
+      try {
+        const response =
+          await fetch(
+            `${API_BASE}/api/opportunities/${opportunity.id}/prepare`,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
+
+              body: JSON.stringify({
+                userProfile: profile
+              })
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.message ||
+              data.error ||
+              "Preparation failed."
+          );
+        }
+
+        setPreparation(
+          data.preparation || null
+        );
+
+        /*
+         * Update the opportunity locally
+         * so the UI immediately reflects
+         * the PREPARED status.
+         */
+        setOpportunities(
+          (current) =>
+            current.map(
+              (item) =>
+                item.id === opportunity.id
+                  ? {
+                      ...item,
+                      status:
+                        "PREPARED"
+                    }
+                  : item
+            )
+        );
+
+      } catch (err) {
+        console.error(
+          "Preparation error:",
+          err
+        );
+
+        setPreparationError(
+          err.message ||
+            "Unable to prepare this opportunity."
+        );
+      } finally {
+        setPreparing(false);
+      }
+    };
+
+  /* ================================= */
+  /* CLOSE PREPARATION */
+  /* ================================= */
+
+  const closePreparation =
+    () => {
+      if (preparing) {
+        return;
+      }
+
+      setPreparation(null);
+      setPreparationError("");
+      setSelectedOpportunity(
+        null
+      );
+    };
+
+  /* ================================= */
+  /* SCORE FORMAT */
+  /* ================================= */
+
   const formatScore = (value) => {
     if (
       value === null ||
@@ -164,6 +300,10 @@ function App() {
       Number(value) || 0
     )}%`;
   };
+
+  /* ================================= */
+  /* PRIORITY */
+  /* ================================= */
 
   const getPriority = (opportunity) => {
     const score =
@@ -685,15 +825,32 @@ function App() {
                         <button
                           className="primary-button"
                           onClick={() =>
-                            alert(
-                              "Preparation workflow will be connected next."
+                            prepareSelectedOpportunity(
+                              opportunity
                             )
                           }
+                          disabled={
+                            preparing
+                          }
                         >
-                          Prepare
+                          {preparing &&
+                          selectedOpportunity?.id ===
+                            opportunity.id
+                            ? "Preparing..."
+                            : opportunity.status ===
+                              "PREPARED"
+                            ? "Prepared ✓"
+                            : "Prepare"}
                         </button>
 
                       </div>
+
+                      {opportunity.status ===
+                        "PREPARED" && (
+                        <div className="prepared-badge">
+                          ✓ Preparation completed
+                        </div>
+                      )}
 
                     </article>
                   );
@@ -814,6 +971,486 @@ function App() {
         )}
 
       </main>
+
+      {/* ================================= */}
+      {/* PREPARATION MODAL */}
+      {/* ================================= */}
+
+      {(preparing ||
+        preparation ||
+        preparationError) && (
+        <div
+          className="modal-overlay"
+          onClick={
+            preparing
+              ? undefined
+              : closePreparation
+          }
+        >
+
+          <div
+            className="preparation-modal"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+
+            <div className="modal-header">
+
+              <div>
+                <div className="section-label">
+                  AI PREPARATION
+                </div>
+
+                <h2>
+                  {preparing
+                    ? "Preparing Opportunity..."
+                    : "Preparation Complete"}
+                </h2>
+              </div>
+
+              {!preparing && (
+                <button
+                  className="close-button"
+                  onClick={
+                    closePreparation
+                  }
+                >
+                  ×
+                </button>
+              )}
+
+            </div>
+
+            {preparing && (
+              <div className="preparation-loading">
+
+                <div className="large-spinner" />
+
+                <h3>
+                  AI is preparing your
+                  opportunity
+                </h3>
+
+                <p>
+                  Building the application
+                  or proposal package...
+                </p>
+
+                <div className="preparation-steps">
+
+                  <div>
+                    ✓ Opportunity selected
+                  </div>
+
+                  <div>
+                    ✓ User skills analyzed
+                  </div>
+
+                  <div>
+                    → Preparing application
+                  </div>
+
+                  <div>
+                    → Validating preparation
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {preparationError &&
+              !preparing && (
+              <div className="error-message">
+
+                <strong>
+                  Preparation failed
+                </strong>
+
+                <div>
+                  {preparationError}
+                </div>
+
+              </div>
+            )}
+
+            {preparation &&
+              !preparing && (
+              <div className="preparation-result">
+
+                <div className="preparation-status">
+
+                  <span>
+                    STATUS
+                  </span>
+
+                  <strong>
+                    {preparation.status ||
+                      "READY_FOR_REVIEW"}
+                  </strong>
+
+                </div>
+
+                {selectedOpportunity && (
+                  <div className="prepared-opportunity">
+
+                    <div className="section-label">
+                      OPPORTUNITY
+                    </div>
+
+                    <h3>
+                      {selectedOpportunity.title ||
+                        "Untitled Opportunity"}
+                    </h3>
+
+                    {selectedOpportunity.company && (
+                      <p>
+                        {selectedOpportunity.company}
+                      </p>
+                    )}
+
+                  </div>
+                )}
+
+                {preparation.type && (
+                  <div className="prepared-type">
+
+                    <span>
+                      Type
+                    </span>
+
+                    <strong>
+                      {String(
+                        preparation.type
+                      ).replace(
+                        "_",
+                        " "
+                      )}
+                    </strong>
+
+                  </div>
+                )}
+
+                {/* ======================== */}
+                {/* FREELANCE / PROPOSAL */}
+                {/* ======================== */}
+
+                {preparation.package
+                  ?.proposal && (
+                  <div className="proposal-section">
+
+                    <div className="section-label">
+                      AI PROPOSAL
+                    </div>
+
+                    {preparation.package
+                      ?.subject && (
+                      <div className="subject-box">
+
+                        <span>
+                          Subject
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .subject
+                          }
+                        </strong>
+
+                      </div>
+                    )}
+
+                    <div className="proposal-box">
+
+                      <p>
+                        {
+                          preparation
+                            .package
+                            .proposal
+                        }
+                      </p>
+
+                    </div>
+
+                  </div>
+                )}
+
+                {/* ======================== */}
+                {/* APPLICATION PACKAGE */}
+                {/* ======================== */}
+
+                {preparation.package &&
+                  !preparation.package
+                    ?.proposal && (
+                  <div className="application-section">
+
+                    <div className="section-label">
+                      APPLICATION PACKAGE
+                    </div>
+
+                    {preparation.package
+                      ?.title && (
+                      <div className="detail-row">
+
+                        <span>
+                          Position
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .title
+                          }
+                        </strong>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.company && (
+                      <div className="detail-row">
+
+                        <span>
+                          Company
+                        </span>
+
+                        <strong>
+                          {
+                            preparation
+                              .package
+                              .company
+                          }
+                        </strong>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.url && (
+                      <div className="detail-row">
+
+                        <span>
+                          Opportunity
+                        </span>
+
+                        <a
+                          href={
+                            preparation
+                              .package
+                              .url
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Opportunity
+                        </a>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.skills && (
+                      <div className="detail-block">
+
+                        <span>
+                          Relevant Skills
+                        </span>
+
+                        <div className="skills">
+
+                          {(Array.isArray(
+                            preparation
+                              .package
+                              .skills
+                          )
+                            ? preparation
+                                .package
+                                .skills
+                            : [
+                                preparation
+                                  .package
+                                  .skills
+                              ]
+                          ).map(
+                            (skill) => (
+                              <span
+                                className="skill"
+                                key={skill}
+                              >
+                                {skill}
+                              </span>
+                            )
+                          )}
+
+                        </div>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.applicationText && (
+                      <div className="proposal-box">
+
+                        <p>
+                          {
+                            preparation
+                              .package
+                              .applicationText
+                          }
+                        </p>
+
+                      </div>
+                    )}
+
+                    {preparation.package
+                      ?.coverLetter && (
+                      <div className="proposal-box">
+
+                        <div className="section-label">
+                          COVER LETTER
+                        </div>
+
+                        <p>
+                          {
+                            preparation
+                              .package
+                              .coverLetter
+                          }
+                        </p>
+
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
+                {/* ======================== */}
+                {/* VALIDATION */}
+                {/* ======================== */}
+
+                {preparation.validation && (
+                  <div
+                    className={
+                      preparation
+                        .validation
+                        .valid
+                        ? "validation valid"
+                        : "validation invalid"
+                    }
+                  >
+
+                    <strong>
+                      {preparation
+                        .validation
+                        .valid
+                        ? "✓ Preparation validated"
+                        : "⚠ Needs review"}
+                    </strong>
+
+                    {preparation
+                      .validation
+                      .errors
+                      ?.length > 0 && (
+                      <ul>
+
+                        {preparation
+                          .validation
+                          .errors
+                          .map(
+                            (
+                              validationError,
+                              index
+                            ) => (
+                              <li
+                                key={index}
+                              >
+                                {
+                                  validationError
+                                }
+                              </li>
+                            )
+                          )}
+
+                      </ul>
+                    )}
+
+                  </div>
+                )}
+
+                {/* ======================== */}
+                {/* NEXT ACTION */}
+                {/* ======================== */}
+
+                {preparation.nextAction && (
+                  <div className="next-action">
+
+                    <div className="section-label">
+                      NEXT ACTION
+                    </div>
+
+                    <p>
+                      {
+                        preparation
+                          .nextAction
+                      }
+                    </p>
+
+                  </div>
+                )}
+
+                <div className="review-notice">
+
+                  <strong>
+                    Human review required
+                  </strong>
+
+                  <p>
+                    OpportunityAI prepares the
+                    application or proposal, but
+                    does not automatically submit
+                    it or send outreach without
+                    the required user approval.
+                  </p>
+
+                </div>
+
+                <div className="modal-actions">
+
+                  {selectedOpportunity?.url && (
+                    <a
+                      href={
+                        selectedOpportunity.url
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      className="secondary-button"
+                    >
+                      View Opportunity
+                    </a>
+                  )}
+
+                  <button
+                    className="primary-button"
+                    onClick={
+                      closePreparation
+                    }
+                  >
+                    Done
+                  </button>
+
+                </div>
+
+              </div>
+            )}
+
+          </div>
+
+        </div>
+      )}
 
       {/* ================================= */}
       {/* FOOTER */}
@@ -1298,6 +1935,16 @@ function App() {
           flex-wrap: wrap;
         }
 
+        .prepared-badge {
+          margin-top: 14px;
+          padding: 10px 12px;
+          border-radius: 9px;
+          background: #f0fdf4;
+          color: #166534;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
         /* EMPTY */
 
         .empty-state {
@@ -1375,6 +2022,281 @@ function App() {
           margin-top: 4px;
         }
 
+        /* ================================= */
+        /* PREPARATION MODAL */
+        /* ================================= */
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          background: rgba(
+            15,
+            23,
+            42,
+            .72
+          );
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          overflow-y: auto;
+        }
+
+        .preparation-modal {
+          width: min(
+            850px,
+            100%
+          );
+          max-height: 90vh;
+          overflow-y: auto;
+          background: white;
+          border-radius: 20px;
+          padding: 28px;
+          box-shadow:
+            0 25px 70px
+            rgba(
+              15,
+              23,
+              42,
+              .25
+            );
+        }
+
+        .modal-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          align-items: flex-start;
+          padding-bottom: 18px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .modal-header h2 {
+          margin: 7px 0 0;
+        }
+
+        .close-button {
+          width: 36px;
+          height: 36px;
+          border: 0;
+          border-radius: 9px;
+          background: #f1f5f9;
+          color: #475569;
+          font-size: 25px;
+          line-height: 1;
+        }
+
+        .preparation-loading {
+          text-align: center;
+          padding: 45px 20px;
+        }
+
+        .large-spinner {
+          width: 50px;
+          height: 50px;
+          margin: 0 auto 20px;
+          border: 5px solid #e2e8f0;
+          border-top-color: #0f172a;
+          border-radius: 50%;
+          animation: spin .8s linear infinite;
+        }
+
+        .preparation-loading h3 {
+          margin-bottom: 8px;
+        }
+
+        .preparation-loading p {
+          color: #64748b;
+        }
+
+        .preparation-steps {
+          max-width: 420px;
+          margin: 25px auto 0;
+          text-align: left;
+          display: grid;
+          gap: 10px;
+        }
+
+        .preparation-steps div {
+          padding: 11px 13px;
+          border-radius: 9px;
+          background: #f8fafc;
+          color: #475569;
+          font-size: 13px;
+        }
+
+        .preparation-result {
+          padding-top: 22px;
+        }
+
+        .preparation-status {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 15px;
+          padding: 14px;
+          border-radius: 11px;
+          background: #f0fdf4;
+          color: #166534;
+        }
+
+        .preparation-status span {
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 1px;
+        }
+
+        .prepared-opportunity {
+          margin-top: 22px;
+          padding: 18px;
+          background: #f8fafc;
+          border-radius: 12px;
+        }
+
+        .prepared-opportunity h3 {
+          margin: 7px 0;
+        }
+
+        .prepared-opportunity p {
+          margin: 0;
+          color: #64748b;
+        }
+
+        .prepared-type {
+          display: flex;
+          justify-content: space-between;
+          padding: 15px 0;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .prepared-type span {
+          color: #64748b;
+        }
+
+        .proposal-section,
+        .application-section {
+          margin-top: 25px;
+        }
+
+        .subject-box {
+          margin-top: 12px;
+          padding: 14px;
+          border-radius: 10px;
+          background: #f8fafc;
+        }
+
+        .subject-box span,
+        .subject-box strong {
+          display: block;
+        }
+
+        .subject-box span {
+          color: #64748b;
+          font-size: 11px;
+          margin-bottom: 5px;
+        }
+
+        .proposal-box {
+          margin-top: 12px;
+          padding: 18px;
+          border-radius: 12px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          white-space: pre-wrap;
+        }
+
+        .proposal-box p {
+          margin: 0;
+          color: #334155;
+          line-height: 1.7;
+        }
+
+        .detail-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          padding: 13px 0;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .detail-row span {
+          color: #64748b;
+        }
+
+        .detail-row a {
+          color: #0f172a;
+          font-weight: 700;
+        }
+
+        .detail-block {
+          padding: 15px 0;
+        }
+
+        .detail-block > span {
+          display: block;
+          margin-bottom: 10px;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .validation {
+          margin-top: 20px;
+          padding: 15px;
+          border-radius: 11px;
+        }
+
+        .validation.valid {
+          background: #f0fdf4;
+          color: #166534;
+        }
+
+        .validation.invalid {
+          background: #fff7ed;
+          color: #9a3412;
+        }
+
+        .validation ul {
+          margin-bottom: 0;
+        }
+
+        .next-action {
+          margin-top: 20px;
+          padding: 16px;
+          border-radius: 11px;
+          background: #f1f5f9;
+        }
+
+        .next-action p {
+          margin: 8px 0 0;
+          color: #475569;
+          line-height: 1.6;
+        }
+
+        .review-notice {
+          margin-top: 20px;
+          padding: 16px;
+          border-radius: 11px;
+          background: #fffbeb;
+          color: #92400e;
+          border: 1px solid #fde68a;
+        }
+
+        .review-notice p {
+          margin: 7px 0 0;
+          line-height: 1.6;
+          font-size: 13px;
+        }
+
+        .modal-actions {
+          margin-top: 25px;
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
         /* FOOTER */
 
         .footer {
@@ -1432,6 +2354,25 @@ function App() {
           }
 
           .footer {
+            flex-direction: column;
+          }
+
+          .preparation-modal {
+            padding: 20px;
+            max-height: 94vh;
+          }
+
+          .modal-overlay {
+            padding: 10px;
+          }
+
+          .detail-row {
+            flex-direction: column;
+            gap: 5px;
+          }
+
+          .preparation-status {
+            align-items: flex-start;
             flex-direction: column;
           }
 
