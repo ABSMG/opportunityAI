@@ -1,5 +1,5 @@
 import "dotenv/config";
-
+import { prepareOpportunity } from "./src/services/preparationService.js";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -260,6 +260,79 @@ app.post(
 );
 
 // =====================================
+// OPPORTUNITY PREPARATION
+// =====================================
+
+app.post("/api/opportunities/:id/prepare", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(503).json({
+        success: false,
+        message: "Supabase is not configured."
+      });
+    }
+
+    const { id } = req.params;
+    const { userProfile = {} } = req.body || {};
+
+    const { data: opportunity, error: fetchError } =
+      await supabase
+        .from("opportunities")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+    if (fetchError) {
+      if (fetchError.code === "PGRST116") {
+        return res.status(404).json({
+          success: false,
+          message: "Opportunity not found."
+        });
+      }
+
+      throw fetchError;
+    }
+
+    const preparation = prepareOpportunity(
+      opportunity,
+      userProfile
+    );
+
+    const { data: updatedOpportunity, error: updateError } =
+      await supabase
+        .from("opportunities")
+        .update({
+          status: "PREPARED",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", id)
+        .select()
+        .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    return res.json({
+      success: true,
+      message: "Opportunity prepared successfully.",
+      opportunity: updatedOpportunity,
+      preparation
+    });
+
+  } catch (error) {
+    console.error(
+      "Prepare opportunity error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Preparation failed.",
+      error: error.message
+    });
+  }
+});/ =====================================
 // OPPORTUNITY SCANNER
 // =====================================
 
