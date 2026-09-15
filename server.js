@@ -263,76 +263,99 @@ app.post(
 // OPPORTUNITY PREPARATION
 // =====================================
 
-app.post("/api/opportunities/:id/prepare", async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.status(503).json({
-        success: false,
-        message: "Supabase is not configured."
-      });
-    }
+app.post(
+  "/api/opportunities/:id/prepare",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          message:
+            "Supabase is not configured."
+        });
+      }
 
-    const { id } = req.params;
-    const { userProfile = {} } = req.body || {};
+      const { id } = req.params;
 
-    const { data: opportunity, error: fetchError } =
-      await supabase
+      const {
+        userProfile = {}
+      } = req.body || {};
+
+      const {
+        data: opportunity,
+        error: fetchError
+      } = await supabase
         .from("opportunities")
         .select("*")
         .eq("id", id)
         .single();
 
-    if (fetchError) {
-      if (fetchError.code === "PGRST116") {
-        return res.status(404).json({
-          success: false,
-          message: "Opportunity not found."
-        });
+      if (fetchError) {
+        if (
+          fetchError.code ===
+          "PGRST116"
+        ) {
+          return res.status(404).json({
+            success: false,
+            message:
+              "Opportunity not found."
+          });
+        }
+
+        throw fetchError;
       }
 
-      throw fetchError;
-    }
+      const preparation =
+        prepareOpportunity(
+          opportunity,
+          userProfile
+        );
 
-    const preparation = prepareOpportunity(
-      opportunity,
-      userProfile
-    );
-
-    const { data: updatedOpportunity, error: updateError } =
-      await supabase
+      const {
+        data: updatedOpportunity,
+        error: updateError
+      } = await supabase
         .from("opportunities")
         .update({
           status: "PREPARED",
-          updated_at: new Date().toISOString()
+          updated_at:
+            new Date().toISOString()
         })
         .eq("id", id)
         .select()
         .single();
 
-    if (updateError) {
-      throw updateError;
+      if (updateError) {
+        throw updateError;
+      }
+
+      return res.json({
+        success: true,
+        message:
+          "Opportunity prepared successfully.",
+        opportunity:
+          updatedOpportunity,
+        preparation
+      });
+
+    } catch (error) {
+      console.error(
+        "Prepare opportunity error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Preparation failed.",
+        error:
+          error.message
+      });
     }
-
-    return res.json({
-      success: true,
-      message: "Opportunity prepared successfully.",
-      opportunity: updatedOpportunity,
-      preparation
-    });
-
-  } catch (error) {
-    console.error(
-      "Prepare opportunity error:",
-      error.message
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Preparation failed.",
-      error: error.message
-    });
   }
-});/ =====================================
+);
+
+// =====================================
 // OPPORTUNITY SCANNER
 // =====================================
 
@@ -427,17 +450,21 @@ app.post(
           await supabase
             .from("automation_runs")
             .update({
-              status: "COMPLETED",
+              status:
+                "COMPLETED",
 
-              items_found: 0,
+              items_found:
+                0,
 
-              items_processed: 0,
+              items_processed:
+                0,
 
               metadata: {
                 message:
                   "Scanner completed. No opportunities were found.",
                 durationMs:
-                  Date.now() - startedAt
+                  Date.now() -
+                  startedAt
               },
 
               completed_at:
@@ -455,18 +482,24 @@ app.post(
           message:
             "Scanner completed, but no opportunities were found.",
 
-          discovered: 0,
+          discovered:
+            0,
 
-          analyzed: 0,
+          analyzed:
+            0,
 
-          ranked: 0,
+          ranked:
+            0,
 
-          saved: 0,
+          saved:
+            0,
 
-          opportunities: [],
+          opportunities:
+            [],
 
           durationMs:
-            Date.now() - startedAt
+            Date.now() -
+            startedAt
         });
       }
 
@@ -676,8 +709,10 @@ app.post(
           ranked,
 
         durationMs:
-          Date.now() - startedAt
+          Date.now() -
+          startedAt
       });
+
     } catch (error) {
       console.error(
         "Scanner error:",
@@ -727,6 +762,7 @@ app.post(
               updateError.message
             );
           }
+
         } catch (
           updateError
         ) {
@@ -748,7 +784,8 @@ app.post(
           "Unknown scanner error",
 
         durationMs:
-          Date.now() - startedAt
+          Date.now() -
+          startedAt
       });
     }
   }
@@ -787,8 +824,10 @@ app.get(
 
       return res.json({
         success: true,
-        runs: data || []
+        runs:
+          data || []
       });
+
     } catch (error) {
       console.error(
         "Scanner status error:",
@@ -797,7 +836,8 @@ app.get(
 
       return res.status(500).json({
         success: false,
-        message: error.message
+        message:
+          error.message
       });
     }
   }
