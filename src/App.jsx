@@ -1,479 +1,735 @@
 import React, { useState } from "react";
 
-const opportunityTypes = [
-  {
-    id: "remote",
-    name: "Remote Jobs",
-    icon: "💼",
-    description: "Find remote opportunities matching your skills."
-  },
-  {
-    id: "freelance",
-    name: "Freelance Gigs",
-    icon: "🧑‍💻",
-    description: "Discover freelance work and prepare targeted proposals."
-  },
-  {
-    id: "customers",
-    name: "Direct Customers",
-    icon: "🏢",
-    description: "Identify businesses that may need your services."
-  }
+const API_BASE = "";
+
+const tabs = [
+  "Overview",
+  "Opportunities",
+  "Outreach",
+  "Applications"
 ];
 
+const initialProfile = {
+  skills: [
+    "English",
+    "Swahili",
+    "communication",
+    "translation",
+    "AI",
+    "computer",
+    "internet"
+  ],
+  ownerId: null
+};
+
 function App() {
-  const [active, setActive] = useState("overview");
+  const [activeTab, setActiveTab] =
+    useState("Overview");
+
+  const [scanning, setScanning] =
+    useState(false);
+
+  const [scanMessage, setScanMessage] =
+    useState("");
+
+  const [opportunities, setOpportunities] =
+    useState([]);
+
+  const [profile] =
+    useState(initialProfile);
+
+  const [error, setError] =
+    useState("");
+
+  const runScanner = async () => {
+    setScanning(true);
+    setError("");
+    setScanMessage("Starting AI Scanner...");
+    setOpportunities([]);
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/scanner/run`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            userProfile: profile,
+            save: true
+          })
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message ||
+            data.error ||
+            "Scanner failed."
+        );
+      }
+
+      setOpportunities(
+        data.opportunities || []
+      );
+
+      if (
+        data.opportunities?.length
+      ) {
+        setScanMessage(
+          `Scanner found ${data.opportunities.length} relevant opportunities.`
+        );
+      } else {
+        setScanMessage(
+          data.message ||
+            "Scanner completed. No matching opportunities were found."
+        );
+      }
+    } catch (err) {
+      console.error(
+        "Scanner error:",
+        err
+      );
+
+      setError(
+        err.message ||
+          "Unable to run scanner."
+      );
+
+      setScanMessage("");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const loadSavedOpportunities =
+    async () => {
+      setError("");
+      setScanMessage(
+        "Loading saved opportunities..."
+      );
+
+      try {
+        const response =
+          await fetch(
+            "/api/opportunities"
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.message ||
+              "Unable to load opportunities."
+          );
+        }
+
+        setOpportunities(
+          data.opportunities || []
+        );
+
+        setScanMessage(
+          `Loaded ${data.opportunities?.length || 0} saved opportunities.`
+        );
+      } catch (err) {
+        console.error(
+          "Load opportunities error:",
+          err
+        );
+
+        setError(
+          err.message ||
+            "Unable to load opportunities."
+        );
+      }
+    };
+
+  const formatScore = (value) => {
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return "—";
+    }
+
+    return `${Math.round(
+      Number(value) || 0
+    )}%`;
+  };
+
+  const getPriority = (opportunity) => {
+    const score =
+      opportunity.aiAnalysis
+        ?.fitScore ??
+      opportunity.matchScore ??
+      0;
+
+    if (score >= 80) {
+      return "HIGH";
+    }
+
+    if (score >= 60) {
+      return "MEDIUM";
+    }
+
+    return "LOW";
+  };
 
   return (
-    <div style={styles.app}>
-      <header style={styles.header}>
+    <div className="app">
+
+      {/* ================================= */}
+      {/* HEADER */}
+      {/* ================================= */}
+
+      <header className="header">
         <div>
-          <h1 style={styles.logo}>OpportunityAI</h1>
-          <p style={styles.tagline}>
-            AI-powered opportunity automation
+          <h1>
+            OpportunityAI
+          </h1>
+
+          <p className="subtitle">
+            AI-powered opportunity
+            automation
           </p>
         </div>
 
-        <div style={styles.status}>
-          <span style={styles.dot}></span>
+        <div className="status">
+          <span className="status-dot">
+            ●
+          </span>
+
           Automation Ready
         </div>
       </header>
 
-      <main style={styles.container}>
-        <section style={styles.hero}>
-          <div>
-            <p style={styles.eyebrow}>REVENUE ENGINE</p>
+      {/* ================================= */}
+      {/* HERO */}
+      {/* ================================= */}
 
-            <h2 style={styles.title}>
-              Find opportunities.
-              <br />
-              Turn them into income.
-            </h2>
+      <section className="hero">
+        <div className="hero-content">
 
-            <p style={styles.text}>
-              OpportunityAI is designed to discover legitimate paid
-              opportunities, analyze them with AI, prepare applications
-              and proposals, and help manage the path from opportunity
-              to completed work.
-            </p>
-
-            <button
-              style={styles.primaryButton}
-              onClick={() => setActive("opportunities")}
-            >
-              Start Opportunity Scan
-            </button>
+          <div className="hero-badge">
+            REVENUE ENGINE
           </div>
 
-          <div style={styles.revenueCard}>
-            <span style={styles.cardLabel}>Revenue Target</span>
-            <strong style={styles.revenue}>TZS 10,000+</strong>
-            <span style={styles.cardSmall}>
-              daily target — not guaranteed
+          <h2>
+            Find opportunities.
+            <br />
+            Let AI do the analysis.
+          </h2>
+
+          <p>
+            OpportunityAI discovers
+            legitimate remote jobs,
+            freelance opportunities and
+            potential customers, then
+            analyzes and ranks them for
+            you.
+          </p>
+
+          <div className="target">
+            <strong>
+              TZS 10,000+
+            </strong>
+
+            <span>
+              daily target
             </span>
           </div>
-        </section>
 
-        <nav style={styles.nav}>
-          <button
-            style={active === "overview" ? styles.activeNav : styles.navButton}
-            onClick={() => setActive("overview")}
-          >
-            Overview
-          </button>
+          <small className="notice">
+            Target only — income is not
+            guaranteed.
+          </small>
 
+        </div>
+      </section>
+
+      {/* ================================= */}
+      {/* NAVIGATION */}
+      {/* ================================= */}
+
+      <nav className="tabs">
+
+        {tabs.map((tab) => (
           <button
-            style={
-              active === "opportunities"
-                ? styles.activeNav
-                : styles.navButton
+            key={tab}
+            className={
+              activeTab === tab
+                ? "tab active"
+                : "tab"
             }
-            onClick={() => setActive("opportunities")}
+            onClick={() =>
+              setActiveTab(tab)
+            }
           >
-            Opportunities
+            {tab}
           </button>
+        ))}
 
-          <button
-            style={active === "outreach" ? styles.activeNav : styles.navButton}
-            onClick={() => setActive("outreach")}
-          >
-            Outreach
-          </button>
+      </nav>
 
-          <button
-            style={active === "applications" ? styles.activeNav : styles.navButton}
-            onClick={() => setActive("applications")}
-          >
-            Applications
-          </button>
-        </nav>
+      {/* ================================= */}
+      {/* MAIN */}
+      {/* ================================= */}
 
-        {active === "overview" && (
+      <main className="main">
+
+        {/* ================================= */}
+        {/* OVERVIEW */}
+        {/* ================================= */}
+
+        {activeTab ===
+          "Overview" && (
           <>
-            <section style={styles.section}>
-              <h3>Income Channels</h3>
 
-              <div style={styles.grid}>
-                {opportunityTypes.map((item) => (
-                  <div key={item.id} style={styles.channelCard}>
-                    <div style={styles.icon}>{item.icon}</div>
+            <section className="scanner-card">
 
-                    <h4>{item.name}</h4>
+              <div>
+                <div className="section-label">
+                  OPPORTUNITY SCANNER
+                </div>
 
-                    <p style={styles.muted}>
-                      {item.description}
-                    </p>
+                <h2>
+                  Find new opportunities
+                </h2>
 
-                    <button
-                      style={styles.secondaryButton}
-                      onClick={() => setActive("opportunities")}
+                <p>
+                  Scan approved opportunity
+                  sources, analyze them with
+                  AI, match them against your
+                  skills and rank the best
+                  opportunities.
+                </p>
+              </div>
+
+              <div className="scanner-actions">
+
+                <button
+                  className="primary-button"
+                  onClick={runScanner}
+                  disabled={scanning}
+                >
+                  {scanning
+                    ? "Scanning..."
+                    : "🔎 Run AI Scanner"}
+                </button>
+
+                <button
+                  className="secondary-button"
+                  onClick={
+                    loadSavedOpportunities
+                  }
+                  disabled={scanning}
+                >
+                  Load Saved
+                </button>
+
+              </div>
+
+              {scanning && (
+                <div className="scanner-progress">
+                  <div className="spinner" />
+                  <span>
+                    Fetching → Analyzing →
+                    Matching → Ranking →
+                    Saving
+                  </span>
+                </div>
+              )}
+
+              {scanMessage && (
+                <div className="success-message">
+                  {scanMessage}
+                </div>
+              )}
+
+              {error && (
+                <div className="error-message">
+                  {error}
+                </div>
+              )}
+
+            </section>
+
+            {/* ============================ */}
+            {/* WORKFLOW */}
+            {/* ============================ */}
+
+            <section className="workflow-card">
+
+              <div className="section-label">
+                AUTOMATION WORKFLOW
+              </div>
+
+              <div className="workflow">
+
+                {[
+                  "Find",
+                  "Analyze",
+                  "Match",
+                  "Prepare",
+                  "Reach Out",
+                  "Track",
+                  "Convert"
+                ].map(
+                  (
+                    step,
+                    index
+                  ) => (
+                    <React.Fragment
+                      key={step}
                     >
-                      Explore
-                    </button>
-                  </div>
-                ))}
+
+                      <div className="workflow-step">
+                        <span>
+                          {index + 1}
+                        </span>
+
+                        <strong>
+                          {step}
+                        </strong>
+                      </div>
+
+                      {index <
+                        6 && (
+                        <div className="arrow">
+                          →
+                        </div>
+                      )}
+
+                    </React.Fragment>
+                  )
+                )}
+
               </div>
+
             </section>
 
-            <section style={styles.workflow}>
-              <h3>Automation Workflow</h3>
+            {/* ============================ */}
+            {/* CHANNELS */}
+            {/* ============================ */}
 
-              <div style={styles.workflowGrid}>
-                <div>🔎 Find</div>
-                <div>🧠 Analyze</div>
-                <div>🎯 Match</div>
-                <div>✍️ Prepare</div>
-                <div>📩 Reach Out</div>
-                <div>📊 Track</div>
-                <div>💰 Convert</div>
+            <section className="channels">
+
+              <div className="channel-card">
+                <div className="channel-icon">
+                  💼
+                </div>
+
+                <h3>
+                  Remote Jobs
+                </h3>
+
+                <p>
+                  Discover legitimate
+                  remote employment
+                  opportunities.
+                </p>
               </div>
+
+              <div className="channel-card">
+                <div className="channel-icon">
+                  🛠️
+                </div>
+
+                <h3>
+                  Freelance Gigs
+                </h3>
+
+                <p>
+                  Find freelance projects
+                  matching your skills.
+                </p>
+              </div>
+
+              <div className="channel-card">
+                <div className="channel-icon">
+                  🎯
+                </div>
+
+                <h3>
+                  Direct Customers
+                </h3>
+
+                <p>
+                  Identify potential
+                  customers for legitimate
+                  outreach.
+                </p>
+              </div>
+
             </section>
+
           </>
         )}
 
-        {active === "opportunities" && (
-          <section style={styles.section}>
-            <h3>Opportunity Scanner</h3>
+        {/* ================================= */}
+        {/* OPPORTUNITIES */}
+        {/* ================================= */}
 
-            <div style={styles.scanCard}>
-              <h4>AI Opportunity Scanner</h4>
+        {activeTab ===
+          "Opportunities" && (
+          <section>
 
-              <p style={styles.muted}>
-                The scanner will search approved data sources for
-                relevant remote jobs, freelance work and potential
-                customers.
-              </p>
+            <div className="page-heading">
+              <div>
+                <div className="section-label">
+                  OPPORTUNITY DATABASE
+                </div>
 
-              <div style={styles.scanStatus}>
-                <span>System:</span>
-                <strong> Waiting for data sources</strong>
+                <h2>
+                  Recommended Opportunities
+                </h2>
               </div>
 
-              <button style={styles.primaryButton}>
-                Configure Scanner
+              <button
+                className="primary-button"
+                onClick={runScanner}
+                disabled={scanning}
+              >
+                {scanning
+                  ? "Scanning..."
+                  : "🔎 Scan Now"}
               </button>
             </div>
-          </section>
-        )}
 
-        {active === "outreach" && (
-          <section style={styles.section}>
-            <h3>Outreach Manager</h3>
+            {opportunities.length ===
+              0 && (
+              <div className="empty-state">
 
-            <div style={styles.scanCard}>
-              <h4>Customer Acquisition</h4>
-
-              <p style={styles.muted}>
-                AI will help identify relevant prospects, personalize
-                messages and track responses. Automated outreach will
-                follow the rules of each communication platform.
-              </p>
-
-              <div style={styles.metrics}>
-                <div>
-                  <strong>0</strong>
-                  <span>Prospects</span>
+                <div className="empty-icon">
+                  🔎
                 </div>
 
-                <div>
-                  <strong>0</strong>
-                  <span>Messages</span>
-                </div>
+                <h3>
+                  No opportunities yet
+                </h3>
 
-                <div>
-                  <strong>0</strong>
-                  <span>Responses</span>
-                </div>
+                <p>
+                  Run the AI Scanner to
+                  discover matching
+                  opportunities.
+                </p>
+
+                <button
+                  className="primary-button"
+                  onClick={runScanner}
+                  disabled={scanning}
+                >
+                  Run AI Scanner
+                </button>
+
               </div>
+            )}
+
+            <div className="opportunity-list">
+
+              {opportunities.map(
+                (opportunity, index) => {
+
+                  const priority =
+                    getPriority(
+                      opportunity
+                    );
+
+                  const fitScore =
+                    opportunity
+                      .aiAnalysis
+                      ?.fitScore ??
+                    opportunity.matchScore ??
+                    0;
+
+                  const opportunityScore =
+                    opportunity
+                      .opportunityScore ??
+                    0;
+
+                  return (
+                    <article
+                      className="opportunity-card"
+                      key={
+                        opportunity.id ||
+                        opportunity.url ||
+                        index
+                      }
+                    >
+
+                      <div className="opportunity-top">
+
+                        <div>
+                          <span className="opportunity-type">
+                            {String(
+                              opportunity.type ||
+                                "opportunity"
+                            ).replace(
+                              "_",
+                              " "
+                            )}
+                          </span>
+
+                          <h3>
+                            {opportunity.title ||
+                              "Untitled opportunity"}
+                          </h3>
+
+                          {opportunity.company && (
+                            <p className="company">
+                              {opportunity.company}
+                            </p>
+                          )}
+                        </div>
+
+                        <span
+                          className={`priority ${priority.toLowerCase()}`}
+                        >
+                          {priority}
+                        </span>
+
+                      </div>
+
+                      <p className="description">
+                        {opportunity.description ||
+                          "No description available."}
+                      </p>
+
+                      <div className="scores">
+
+                        <div>
+                          <span>
+                            AI Match
+                          </span>
+
+                          <strong>
+                            {formatScore(
+                              fitScore
+                            )}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Opportunity
+                          </span>
+
+                          <strong>
+                            {formatScore(
+                              opportunityScore
+                            )}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Remote
+                          </span>
+
+                          <strong>
+                            {opportunity.remote
+                              ? "YES"
+                              : "NO"}
+                          </strong>
+                        </div>
+
+                      </div>
+
+                      {opportunity
+                        .aiAnalysis
+                        ?.matchedSkills
+                        ?.length > 0 && (
+                        <div className="skills">
+
+                          <span>
+                            Matched skills:
+                          </span>
+
+                          {opportunity.aiAnalysis.matchedSkills.map(
+                            (skill) => (
+                              <span
+                                className="skill"
+                                key={skill}
+                              >
+                                {skill}
+                              </span>
+                            )
+                          )}
+
+                        </div>
+                      )}
+
+                      <div className="opportunity-actions">
+
+                        {opportunity.url && (
+                          <a
+                            href={
+                              opportunity.url
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                            className="secondary-button"
+                          >
+                            View Opportunity
+                          </a>
+                        )}
+
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            alert(
+                              "Preparation workflow will be connected next."
+                            )
+                          }
+                        >
+                          Prepare
+                        </button>
+
+                      </div>
+
+                    </article>
+                  );
+                }
+              )}
+
             </div>
+
           </section>
         )}
 
-        {active === "applications" && (
-          <section style={styles.section}>
-            <h3>Application Tracker</h3>
+        {/* ================================= */}
+        {/* OUTREACH */}
+        {/* ================================= */}
 
-            <div style={styles.empty}>
-              <div style={styles.emptyIcon}>📋</div>
+        {activeTab ===
+          "Outreach" && (
+          <section className="placeholder-page">
 
-              <h4>No applications yet</h4>
-
-              <p style={styles.muted}>
-                Opportunities approved by you will appear here.
-              </p>
+            <div className="placeholder-icon">
+              📣
             </div>
-          </section>
-        )}
-      </main>
 
-      <footer style={styles.footer}>
-        <p>
-          OpportunityAI © 2026 — Built to automate opportunity discovery
-          and income-related workflows.
-        </p>
-      </footer>
-    </div>
-  );
-}
+            <div className="section-label">
+              OUTREACH MANAGER
+            </div>
 
-const styles = {
-  app: {
-    minHeight: "100vh",
-    background: "#f8fafc",
-    color: "#0f172a",
-    fontFamily:
-      "Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
-  },
+            <h2>
+              Smart Outreach
+            </h2>
 
-  header: {
-    background: "#0f172a",
-    color: "#fff",
-    padding: "22px 6%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "20px",
-    flexWrap: "wrap"
-  },
+            <p>
+              Prepare personalized
+              outreach messages for
+              relevant opportunities and
+              potential customers.
+            </p>
 
-  logo: {
-    margin: 0,
-    fontSize: "26px"
-  },
-
-  tagline: {
-    margin: "4px 0 0",
-    opacity: 0.7,
-    fontSize: "14px"
-  },
-
-  status: {
-    fontSize: "13px",
-    background: "rgba(255,255,255,0.08)",
-    padding: "9px 13px",
-    borderRadius: "999px"
-  },
-
-  dot: {
-    display: "inline-block",
-    width: "8px",
-    height: "8px",
-    background: "#22c55e",
-    borderRadius: "50%",
-    marginRight: "8px"
-  },
-
-  container: {
-    width: "88%",
-    maxWidth: "1200px",
-    margin: "0 auto",
-    padding: "45px 0"
-  },
-
-  hero: {
-    background: "#111827",
-    color: "#fff",
-    borderRadius: "24px",
-    padding: "40px",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "35px",
-    flexWrap: "wrap"
-  },
-
-  eyebrow: {
-    fontSize: "12px",
-    letterSpacing: "2px",
-    opacity: 0.6,
-    fontWeight: 700
-  },
-
-  title: {
-    fontSize: "clamp(34px, 6vw, 60px)",
-    lineHeight: 1.05,
-    margin: "12px 0 20px"
-  },
-
-  text: {
-    maxWidth: "650px",
-    lineHeight: 1.7,
-    opacity: 0.78
-  },
-
-  primaryButton: {
-    border: 0,
-    background: "#fff",
-    color: "#111827",
-    padding: "13px 18px",
-    borderRadius: "10px",
-    fontWeight: 700,
-    cursor: "pointer",
-    marginTop: "12px"
-  },
-
-  revenueCard: {
-    minWidth: "220px",
-    background: "rgba(255,255,255,0.08)",
-    padding: "25px",
-    borderRadius: "18px"
-  },
-
-  cardLabel: {
-    display: "block",
-    opacity: 0.65,
-    fontSize: "13px"
-  },
-
-  revenue: {
-    display: "block",
-    fontSize: "30px",
-    margin: "10px 0"
-  },
-
-  cardSmall: {
-    fontSize: "12px",
-    opacity: 0.55
-  },
-
-  nav: {
-    display: "flex",
-    gap: "8px",
-    overflowX: "auto",
-    padding: "24px 0"
-  },
-
-  navButton: {
-    border: "1px solid #e2e8f0",
-    background: "#fff",
-    padding: "11px 15px",
-    borderRadius: "9px",
-    cursor: "pointer",
-    whiteSpace: "nowrap"
-  },
-
-  activeNav: {
-    border: "0",
-    background: "#0f172a",
-    color: "#fff",
-    padding: "11px 15px",
-    borderRadius: "9px",
-    cursor: "pointer",
-    whiteSpace: "nowrap"
-  },
-
-  section: {
-    marginTop: "10px"
-  },
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "18px",
-    marginTop: "20px"
-  },
-
-  channelCard: {
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "22px"
-  },
-
-  icon: {
-    fontSize: "30px"
-  },
-
-  muted: {
-    color: "#64748b",
-    lineHeight: 1.6
-  },
-
-  secondaryButton: {
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    padding: "10px 14px",
-    borderRadius: "9px",
-    cursor: "pointer"
-  },
-
-  workflow: {
-    marginTop: "35px",
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "25px"
-  },
-
-  workflowGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-    gap: "10px",
-    marginTop: "20px"
-  },
-
-  scanCard: {
-    marginTop: "20px",
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "28px"
-  },
-
-  scanStatus: {
-    margin: "20px 0",
-    padding: "15px",
-    background: "#f8fafc",
-    borderRadius: "10px"
-  },
-
-  metrics: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "15px",
-    marginTop: "25px"
-  },
-
-  empty: {
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "45px",
-    textAlign: "center",
-    marginTop: "20px"
-  },
-
-  emptyIcon: {
-    fontSize: "40px"
-  },
-
-  footer: {
-    textAlign: "center",
-    padding: "30px 20px",
-    color: "#64748b",
-    fontSize: "13px"
-  }
-};
-
-export default App;
+            <div className="automation
