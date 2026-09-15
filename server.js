@@ -1,36 +1,63 @@
+import "dotenv/config";
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 
-dotenv.config();
+import {
+  collectOpportunities,
+  defaultSources
+} from "./src/services/opportunitySources.js";
+
+import {
+  analyzeOpportunities
+} from "./src/services/aiOpportunityAnalyzer.js";
+
+import {
+  rankOpportunities
+} from "./src/services/opportunityEngine.js";
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(cors());
-app.use(express.json());
+// =====================================
+// MIDDLEWARE
+// =====================================
 
-// ===============================
+app.use(cors());
+
+app.use(
+  express.json({
+    limit: "1mb"
+  })
+);
+
+// =====================================
 // SUPABASE
-// ===============================
+// =====================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SECRET_KEY;
 
 const supabase =
   SUPABASE_URL && SUPABASE_SECRET_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY)
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_SECRET_KEY
+      )
     : null;
 
-// ===============================
+// =====================================
 // API HEALTH
-// ===============================
+// =====================================
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -42,20 +69,28 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// ===============================
+// =====================================
 // API ROOT
-// ===============================
+// =====================================
 
 app.get("/api", (req, res) => {
   res.json({
     success: true,
-    service: "OpportunityAI API"
+    service: "OpportunityAI API",
+    version: "1.0.0",
+    capabilities: [
+      "opportunity-discovery",
+      "ai-analysis",
+      "opportunity-matching",
+      "opportunity-ranking",
+      "supabase-storage"
+    ]
   });
 });
 
-// ===============================
-// OPPORTUNITIES
-// ===============================
+// =====================================
+// GET OPPORTUNITIES
+// =====================================
 
 app.get("/api/opportunities", async (req, res) => {
   try {
@@ -66,110 +101,514 @@ app.get("/api/opportunities", async (req, res) => {
       });
     }
 
+    const limit = Math.min(
+      Number(req.query.limit) || 100,
+      100
+    );
+
     const { data, error } = await supabase
       .from("opportunities")
       .select("*")
-      .order("created_at", { ascending: false })
-      .limit(100);
+      .order("created_at", {
+        ascending: false
+      })
+      .limit(limit);
 
     if (error) {
       throw error;
     }
 
-    res.json({
+    return res.json({
       success: true,
       count: data?.length || 0,
       opportunities: data || []
     });
   } catch (error) {
-    res.status(500).json({
+    console.error(
+      "Get opportunities error:",
+      error.message
+    );
+
+    return res.status(500).json({
       success: false,
       message: error.message
     });
   }
 });
 
-// ===============================
+// =====================================
 // CREATE OPPORTUNITY
-// ===============================
+// =====================================
 
-app.post("/api/opportunities", async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.status(503).json({
+app.post(
+  "/api/opportunities",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          message: "Supabase is not configured."
+        });
+      }
+
+      const opportunity = req.body;
+
+      if (!opportunity || !opportunity.title) {
+        return res.status(400).json({
+          success: false,
+          message: "Opportunity title is required."
+        });
+      }
+
+      const allowedFields = {
+        owner_id: opportunity.owner_id || null,
+        type: opportunity.type,
+        title: opportunity.title,
+        description:
+          opportunity.description || "",
+        company:
+          opportunity.company || "",
+        url:
+          opportunity.url || "",
+        payment:
+          opportunity.payment ?? null,
+        currency:
+          opportunity.currency || "",
+        remote:
+          opportunity.remote ?? true,
+        skills:
+          opportunity.skills || "",
+        deadline:
+          opportunity.deadline || null,
+        source:
+          opportunity.source || "manual",
+        source_external_id:
+          opportunity.source_external_id ||
+          null,
+        match_score:
+          opportunity.match_score ?? null,
+        opportunity_score:
+          opportunity.opportunity_score ??
+          null,
+        ai_analysis:
+          opportunity.ai_analysis || null,
+        status:
+          opportunity.status || "NEW"
+      };
+
+      const { data, error } = await supabase
+        .from("opportunities")
+        .insert(allowedFields)
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      return res.status(201).json({
+        success: true,
+        opportunity: data
+      });
+    } catch (error) {
+      console.error(
+        "Create opportunity error:",
+        error.message
+      );
+
+      return res.status(500).json({
         success: false,
-        message: "Supabase is not configured."
+        message: error.message
       });
     }
+  }
+);
 
-    const opportunity = req.body;
+// =====================================
+// OPPORTUNITY SCANNER
+// =====================================
 
-    const { data, error } = await supabase
-      .from("opportunities")
-      .insert(opportunity)
-      .select()
-      .single();
+app.post(
+  "/api/scanner/run",
+  async (req, res) => {
+    const startedAt = Date.now();
 
-    if (error) {
-      throw error;
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          message: "Supabase is not configured."
+        });
+      }
+
+      const {
+        userProfile = {},
+        sources = defaultSources,
+        save = true
+      } = req.body || {};
+
+      // ---------------------------------
+      // 1. START AUTOMATION RUN
+      // ---------------------------------
+
+      let automationRunId = null;
+
+      const { data: runData } =
+        await supabase
+          .from("automation_runs")
+          .insert({
+            owner_id:
+              userProfile.ownerId || null,
+            run_type:
+              "OPPORTUNITY_SCAN",
+            status: "STARTED",
+            metadata: {
+              sourceCount:
+                Array.isArray(sources)
+                  ? sources.length
+                  : 0
+            }
+          })
+          .select()
+          .single();
+
+      if (runData) {
+        automationRunId = runData.id;
+      }
+
+      // ---------------------------------
+      // 2. DISCOVER
+      // ---------------------------------
+
+      const discovered =
+        await collectOpportunities(
+          Array.isArray(sources)
+            ? sources
+            : defaultSources
+        );
+
+      if (!discovered.length) {
+        if (automationRunId) {
+          await supabase
+            .from("automation_runs")
+            .update({
+              status: "COMPLETED",
+              items_found: 0,
+              items_processed: 0,
+              metadata: {
+                message:
+                  "No opportunities found. Configure approved sources."
+              }
+            })
+            .eq("id", automationRunId);
+        }
+
+        return res.json({
+          success: true,
+          message:
+            "Scanner completed, but no opportunities were found.",
+          count: 0,
+          opportunities: [],
+          durationMs:
+            Date.now() - startedAt
+        });
+      }
+
+      // ---------------------------------
+      // 3. AI ANALYZE
+      // ---------------------------------
+
+      const analyzed =
+        await analyzeOpportunities(
+          discovered,
+          userProfile
+        );
+
+      // ---------------------------------
+      // 4. MATCH + RANK
+      // ---------------------------------
+
+      const ranked =
+        rankOpportunities(
+          analyzed,
+          userProfile
+        );
+
+      // ---------------------------------
+      // 5. SAVE TO SUPABASE
+      // ---------------------------------
+
+      let saved = [];
+
+      if (save && ranked.length) {
+        const rows = ranked.map(
+          (opportunity) => ({
+            owner_id:
+              userProfile.ownerId || null,
+
+            type:
+              opportunity.type,
+
+            title:
+              opportunity.title,
+
+            description:
+              opportunity.description || "",
+
+            company:
+              opportunity.company || "",
+
+            url:
+              opportunity.url || "",
+
+            payment:
+              opportunity.payment ??
+              null,
+
+            currency:
+              opportunity.currency || "",
+
+            remote:
+              opportunity.remote ?? true,
+
+            skills:
+              opportunity.skills || "",
+
+            deadline:
+              opportunity.deadline || null,
+
+            source:
+              opportunity.source ||
+              "approved_source",
+
+            source_external_id:
+              opportunity.id || null,
+
+            match_score:
+              opportunity.aiAnalysis
+                ?.fitScore ?? null,
+
+            opportunity_score:
+              opportunity.opportunityScore ??
+              null,
+
+            ai_analysis:
+              opportunity.aiAnalysis ||
+              null,
+
+            status: "NEW"
+          })
+        );
+
+        const {
+          data: savedData,
+          error: saveError
+        } = await supabase
+          .from("opportunities")
+          .insert(rows)
+          .select();
+
+        if (saveError) {
+          throw saveError;
+        }
+
+        saved = savedData || [];
+      }
+
+      // ---------------------------------
+      // 6. COMPLETE AUTOMATION RUN
+      // ---------------------------------
+
+      if (automationRunId) {
+        await supabase
+          .from("automation_runs")
+          .update({
+            status: "COMPLETED",
+            items_found:
+              discovered.length,
+            items_processed:
+              ranked.length,
+            metadata: {
+              savedCount:
+                saved.length,
+              durationMs:
+                Date.now() - startedAt
+            }
+          })
+          .eq("id", automationRunId);
+      }
+
+      // ---------------------------------
+      // 7. RESPONSE
+      // ---------------------------------
+
+      return res.json({
+        success: true,
+
+        message:
+          "Opportunity scan completed.",
+
+        discovered:
+          discovered.length,
+
+        analyzed:
+          analyzed.length,
+
+        ranked:
+          ranked.length,
+
+        saved:
+          saved.length,
+
+        opportunities:
+          ranked,
+
+        durationMs:
+          Date.now() - startedAt
+      });
+    } catch (error) {
+      console.error(
+        "Scanner error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Opportunity scanner failed.",
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// SCANNER STATUS
+// =====================================
+
+app.get(
+  "/api/scanner/status",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          message:
+            "Supabase is not configured."
+        });
+      }
+
+      const { data, error } =
+        await supabase
+          .from("automation_runs")
+          .select("*")
+          .order("created_at", {
+            ascending: false
+          })
+          .limit(20);
+
+      if (error) {
+        throw error;
+      }
+
+      return res.json({
+        success: true,
+        runs: data || []
+      });
+    } catch (error) {
+      console.error(
+        "Scanner status error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// FRONTEND
+// =====================================
+
+const distPath = path.join(
+  __dirname,
+  "dist"
+);
+
+app.use(
+  express.static(distPath)
+);
+
+// =====================================
+// SPA FALLBACK
+// =====================================
+
+app.get(
+  "/{*splat}",
+  (req, res, next) => {
+    if (
+      req.path.startsWith("/api/")
+    ) {
+      return next();
     }
 
-    res.status(201).json({
-      success: true,
-      opportunity: data
+    res.sendFile(
+      path.join(
+        distPath,
+        "index.html"
+      )
+    );
+  }
+);
+
+// =====================================
+// 404
+// =====================================
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      success: false,
+      message:
+        "Route not found."
     });
-  } catch (error) {
+  }
+);
+
+// =====================================
+// ERROR HANDLER
+// =====================================
+
+app.use(
+  (
+    err,
+    req,
+    res,
+    next
+  ) => {
+    console.error(err);
+
     res.status(500).json({
       success: false,
-      message: error.message
+      message:
+        "Internal server error."
     });
   }
-});
+);
 
-// ===============================
-// FRONTEND
-// ===============================
-
-const distPath = path.join(__dirname, "dist");
-
-app.use(express.static(distPath));
-
-app.get("/{*splat}", (req, res, next) => {
-  if (req.path.startsWith("/api/")) {
-    return next();
-  }
-
-  res.sendFile(path.join(distPath, "index.html"));
-});
-
-// ===============================
-// 404
-// ===============================
-
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found."
-  });
-});
-
-// ===============================
-// ERROR HANDLER
-// ===============================
-
-app.use((err, req, res, next) => {
-  console.error(err);
-
-  res.status(500).json({
-    success: false,
-    message: "Internal server error."
-  });
-});
-
-// ===============================
+// =====================================
 // START SERVER
-// ===============================
+// =====================================
 
-app.listen(PORT, () => {
-  console.log(`OpportunityAI running on port ${PORT}`);
-});
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `OpportunityAI running on port ${PORT}`
+    );
+  }
+);
