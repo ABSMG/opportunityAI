@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-
+import { GoogleGenAI } from "@google/genai";
 dotenv.config();
 
 const app = express();
@@ -62,6 +62,143 @@ app.get("/api", (req, res) => {
  */
 app.post(
   "/api/ai/analyze",
+  async (req, res) => {
+    try {
+      const {
+        opportunity,
+        userProfile
+      } = req.body;
+
+      if (!opportunity) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Opportunity is required."
+        });
+      }
+
+      if (!userProfile) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "User profile is required."
+        });
+      }
+
+      const apiKey =
+        process.env.GEMINI_API_KEY;
+
+      if (!apiKey) {
+        return res.status(503).json({
+          success: false,
+          error:
+            "AI service is not configured."
+        });
+      }
+
+      const ai =
+        new GoogleGenAI({
+          apiKey
+        });
+
+      const prompt = `
+Analyze this opportunity for the user.
+
+Opportunity:
+${JSON.stringify(
+  opportunity,
+  null,
+  2
+)}
+
+User profile:
+${JSON.stringify(
+  userProfile,
+  null,
+  2
+)}
+
+Return ONLY valid JSON with:
+{
+  "fitScore": 0,
+  "earningPotential": "UNKNOWN",
+  "priority": "LOW",
+  "matchedSkills": [],
+  "missingSkills": [],
+  "risks": [],
+  "recommendedAction": "",
+  "reason": ""
+}
+
+Rules:
+- Do not guarantee income.
+- Do not invent payment or requirements.
+- If payment is unknown, say UNKNOWN.
+- Consider the user's actual skills.
+- Do not recommend violating platform rules.
+`;
+
+      const response =
+        await ai.models.generateContent({
+          model:
+            "gemini-2.5-flash",
+
+          contents: prompt,
+
+          config: {
+            responseMimeType:
+              "application/json"
+          }
+        });
+
+      const text =
+        response.text;
+
+      let analysis;
+
+      try {
+        analysis =
+          JSON.parse(text);
+      } catch {
+        analysis = {
+          fitScore: 0,
+          earningPotential:
+            "UNKNOWN",
+          priority: "LOW",
+          matchedSkills: [],
+          missingSkills: [],
+          risks: [
+            "AI returned an invalid response."
+          ],
+          recommendedAction:
+            "REVIEW_MANUALLY",
+          reason:
+            "The opportunity requires manual review."
+        };
+      }
+
+      return res.json({
+        success: true,
+        opportunityId:
+          opportunity.id || null,
+        analysis
+      });
+
+    } catch (error) {
+      console.error(
+        "AI analysis error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Unable to analyze opportunity."
+      });
+    }
+  }
+);
+
   async (req, res) => {
     try {
       const {
