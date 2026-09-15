@@ -1,15 +1,22 @@
+import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
 
-const ai = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY
-    })
-  : null;
+function getAI() {
+  const apiKey = process.env.GEMINI_API_KEY;
 
-function fallbackAnalysis(opportunity, userProfile) {
-  const skills = (userProfile.skills || []).map((s) =>
-    s.toLowerCase()
-  );
+  if (!apiKey) {
+    return null;
+  }
+
+  return new GoogleGenAI({
+    apiKey
+  });
+}
+
+function fallbackAnalysis(opportunity, userProfile = {}) {
+  const skills = Array.isArray(userProfile.skills)
+    ? userProfile.skills.map((s) => String(s).toLowerCase())
+    : [];
 
   const text = `
     ${opportunity.title || ""}
@@ -27,7 +34,9 @@ function fallbackAnalysis(opportunity, userProfile) {
 
   return {
     fitScore: matchScore,
-    earningPotential: opportunity.payment ? "known" : "unknown",
+    earningPotential: opportunity.payment
+      ? "known"
+      : "unknown",
     priority:
       matchScore >= 80
         ? "HIGH"
@@ -35,23 +44,28 @@ function fallbackAnalysis(opportunity, userProfile) {
         ? "MEDIUM"
         : "LOW",
     matchedSkills,
+    missingSkills: [],
     risks: [
-      "AI analysis unavailable; using local matching rules."
+      "AI analysis unavailable; local matching rules were used."
     ],
     recommendedAction:
       matchScore >= 60
-        ? "Review and prepare application."
-        : "Skip unless additional information improves the match."
+        ? "Review and prepare the opportunity."
+        : "Skip unless additional information improves the match.",
+    reason:
+      "Match calculated from the available user skills and opportunity information."
   };
 }
 
 export async function analyzeOpportunity(
   opportunity,
-  userProfile
+  userProfile = {}
 ) {
   if (!opportunity) {
     throw new Error("Opportunity is required.");
   }
+
+  const ai = getAI();
 
   if (!ai) {
     return fallbackAnalysis(
@@ -61,10 +75,9 @@ export async function analyzeOpportunity(
   }
 
   const prompt = `
-You are the opportunity-analysis engine for an
-income-focused opportunity platform.
+You are the AI opportunity-analysis engine for OpportunityAI.
 
-Analyze this opportunity objectively.
+Analyze the opportunity objectively for the user.
 
 USER PROFILE:
 ${JSON.stringify(userProfile)}
@@ -72,7 +85,7 @@ ${JSON.stringify(userProfile)}
 OPPORTUNITY:
 ${JSON.stringify(opportunity)}
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON:
 
 {
   "fitScore": 0,
@@ -88,9 +101,11 @@ Return ONLY valid JSON with this structure:
 Rules:
 - Never guarantee income.
 - Never invent salary, payment or requirements.
-- If payment is unknown, say unknown.
+- If payment is unknown, use "unknown".
 - Do not recommend violating platform rules.
-- Give HIGH priority only when the opportunity is strongly relevant.
+- Do not recommend spam.
+- HIGH priority only when strongly relevant.
+- Use only information contained in the user profile and opportunity.
 `;
 
   try {
@@ -110,7 +125,31 @@ Rules:
       throw new Error("Empty AI response.");
     }
 
-    return JSON.parse(text);
+    const analysis = JSON.parse(text);
+
+    return {
+      fitScore: Number(analysis.fitScore) || 0,
+      earningPotential:
+        analysis.earningPotential || "unknown",
+      priority:
+        analysis.priority || "LOW",
+      matchedSkills:
+        Array.isArray(analysis.matchedSkills)
+          ? analysis.matchedSkills
+          : [],
+      missingSkills:
+        Array.isArray(analysis.missingSkills)
+          ? analysis.missingSkills
+          : [],
+      risks:
+        Array.isArray(analysis.risks)
+          ? analysis.risks
+          : [],
+      recommendedAction:
+        analysis.recommendedAction || "Review opportunity.",
+      reason:
+        analysis.reason || ""
+    };
   } catch (error) {
     console.error(
       "AI opportunity analysis failed:",
@@ -125,8 +164,8 @@ Rules:
 }
 
 export async function analyzeOpportunities(
-  opportunities,
-  userProfile
+  opportunities = [],
+  userProfile = {}
 ) {
   const results = [];
 
