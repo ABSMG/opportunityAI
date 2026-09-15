@@ -518,7 +518,7 @@ app.post(
       }
 
       // ---------------------------------
-      // PREPARE
+      // PREPARE OPPORTUNITY
       // ---------------------------------
 
       const preparation =
@@ -528,7 +528,326 @@ app.post(
         );
 
       // ---------------------------------
-      // UPDATE STATUS
+      // SAVE PREPARATION
+      // ---------------------------------
+
+      let savedPreparation =
+        null;
+
+      // ---------------------------------
+      // REMOTE JOB / FREELANCE
+      // ---------------------------------
+
+      if (
+        opportunity.type ===
+          "remote_job" ||
+        opportunity.type ===
+          "freelance"
+      ) {
+        const packageData =
+          preparation.package ||
+          {};
+
+        const proposalText =
+          packageData.proposal ||
+          JSON.stringify(
+            packageData,
+            null,
+            2
+          );
+
+        const notes =
+          JSON.stringify(
+            {
+              preparation,
+              preparedAt:
+                new Date().toISOString()
+            },
+            null,
+            2
+          );
+
+        // Check whether an
+        // application already exists.
+        const {
+          data:
+            existingApplication,
+          error:
+            existingApplicationError
+        } = await supabase
+          .from(
+            "applications"
+          )
+          .select("*")
+          .eq(
+            "opportunity_id",
+            opportunity.id
+          )
+          .maybeSingle();
+
+        if (
+          existingApplicationError
+        ) {
+          throw existingApplicationError;
+        }
+
+        if (
+          existingApplication
+        ) {
+          // Update existing
+          // preparation instead of
+          // creating duplicates.
+          const {
+            data:
+              updatedApplication,
+            error:
+              updateApplicationError
+          } =
+            await supabase
+              .from(
+                "applications"
+              )
+              .update({
+                status:
+                  "READY_FOR_REVIEW",
+
+                proposal:
+                  proposalText,
+
+                notes,
+
+                updated_at:
+                  new Date().toISOString()
+              })
+              .eq(
+                "id",
+                existingApplication.id
+              )
+              .select()
+              .single();
+
+          if (
+            updateApplicationError
+          ) {
+            throw updateApplicationError;
+          }
+
+          savedPreparation =
+            updatedApplication;
+
+        } else {
+          // Create new application
+          // preparation record.
+          const {
+            data:
+              newApplication,
+            error:
+              createApplicationError
+          } =
+            await supabase
+              .from(
+                "applications"
+              )
+              .insert({
+                owner_id:
+                  userProfile.ownerId ||
+                  opportunity.owner_id ||
+                  null,
+
+                opportunity_id:
+                  opportunity.id,
+
+                status:
+                  "READY_FOR_REVIEW",
+
+                proposal:
+                  proposalText,
+
+                notes,
+
+                deadline:
+                  opportunity.deadline ||
+                  null
+              })
+              .select()
+              .single();
+
+          if (
+            createApplicationError
+          ) {
+            throw createApplicationError;
+          }
+
+          savedPreparation =
+            newApplication;
+        }
+      }
+
+      // ---------------------------------
+      // CUSTOMER OUTREACH
+      // ---------------------------------
+
+      if (
+        opportunity.type ===
+        "customer"
+      ) {
+        const packageData =
+          preparation.package ||
+          {};
+
+        const outreach =
+          packageData.outreach ||
+          {};
+
+        const message =
+          outreach.message ||
+          {};
+
+        const subject =
+          message.subject ||
+          "";
+
+        const body =
+          message.body ||
+          "";
+
+        // Check whether an
+        // outreach record already exists.
+        const {
+          data:
+            existingOutreach,
+          error:
+            existingOutreachError
+        } = await supabase
+          .from(
+            "outreach_messages"
+          )
+          .select("*")
+          .eq(
+            "opportunity_id",
+            opportunity.id
+          )
+          .maybeSingle();
+
+        if (
+          existingOutreachError
+        ) {
+          throw existingOutreachError;
+        }
+
+        if (
+          existingOutreach
+        ) {
+          // Update existing
+          // outreach preparation.
+          const {
+            data:
+              updatedOutreach,
+            error:
+              updateOutreachError
+          } =
+            await supabase
+              .from(
+                "outreach_messages"
+              )
+              .update({
+                customer_id:
+                  opportunity.id,
+
+                channel:
+                  outreach.channel ||
+                  "manual",
+
+                subject,
+
+                body,
+
+                status:
+                  "READY_FOR_REVIEW",
+
+                user_approved:
+                  false,
+
+                platform_allows_automation:
+                  false,
+
+                updated_at:
+                  new Date().toISOString()
+              })
+              .eq(
+                "id",
+                existingOutreach.id
+              )
+              .select()
+              .single();
+
+          if (
+            updateOutreachError
+          ) {
+            throw updateOutreachError;
+          }
+
+          savedPreparation =
+            updatedOutreach;
+
+        } else {
+          // Create new outreach
+          // preparation record.
+          const {
+            data:
+              newOutreach,
+            error:
+              createOutreachError
+          } =
+            await supabase
+              .from(
+                "outreach_messages"
+              )
+              .insert({
+                owner_id:
+                  userProfile.ownerId ||
+                  opportunity.owner_id ||
+                  null,
+
+                opportunity_id:
+                  opportunity.id,
+
+                customer_id:
+                  opportunity.id,
+
+                channel:
+                  outreach.channel ||
+                  "manual",
+
+                subject,
+
+                body,
+
+                status:
+                  "READY_FOR_REVIEW",
+
+                user_approved:
+                  false,
+
+                platform_allows_automation:
+                  false
+              })
+              .select()
+              .single();
+
+          if (
+            createOutreachError
+          ) {
+            throw createOutreachError;
+          }
+
+          savedPreparation =
+            newOutreach;
+        }
+      }
+
+      // ---------------------------------
+      // UPDATE OPPORTUNITY STATUS
       // ---------------------------------
 
       const {
@@ -564,12 +883,14 @@ app.post(
         success: true,
 
         message:
-          "Opportunity prepared successfully.",
+          "Opportunity prepared and connected successfully.",
 
         opportunity:
           updatedOpportunity,
 
-        preparation
+        preparation,
+
+        savedPreparation
       });
 
     } catch (error) {
@@ -590,6 +911,21 @@ app.post(
     }
   }
 );
+      
+
+     
+   
+
+
+  
+
+        
+          
+    
+    
+      
+    
+
 
 // =====================================
 // OPPORTUNITY SCANNER
