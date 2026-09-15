@@ -1,9 +1,23 @@
-import { generateProposal, validateProposal } from "./proposalGenerator.js";
-import { prepareRemoteJobApplication } from "./remoteJobEngine.js";
-import { prepareFreelanceProposal } from "./freelanceEngine.js";
+import {
+  generateProposal,
+  validateProposal
+} from "./proposalGenerator.js";
+
+import {
+  prepareRemoteJobApplication
+} from "./remoteJobEngine.js";
+
+import {
+  prepareFreelanceProposal
+} from "./freelanceEngine.js";
+
+import {
+  prepareCustomerOutreach
+} from "./customerFinder.js";
 
 /**
  * Build a review-ready preparation package.
+ *
  * Never submits applications or sends outreach automatically.
  */
 export function prepareOpportunity(
@@ -17,7 +31,9 @@ export function prepareOpportunity(
   const type =
     opportunity.type || "remote_job";
 
-  // FREELANCE
+  /**
+   * FREELANCE
+   */
   if (type === "freelance") {
     const base =
       prepareFreelanceProposal(
@@ -47,8 +63,10 @@ export function prepareOpportunity(
 
       package: {
         ...base,
+
         proposal:
           proposal.proposal,
+
         subject:
           proposal.subject
       },
@@ -60,8 +78,20 @@ export function prepareOpportunity(
     };
   }
 
-  // POTENTIAL CUSTOMER
+  /**
+   * CUSTOMER
+   *
+   * Creates a complete outreach package.
+   * Nothing is sent automatically.
+   */
   if (type === "customer") {
+    const outreach =
+      prepareCustomerOutreach(
+        opportunity,
+        userProfile,
+        "manual"
+      );
+
     return {
       opportunityId:
         opportunity.id,
@@ -71,26 +101,8 @@ export function prepareOpportunity(
       status:
         "READY_FOR_REVIEW",
 
-      package: {
-        opportunityId:
-          opportunity.id,
-
-        customer:
-          opportunity.company ||
-          "Potential Customer",
-
-        opportunityTitle:
-          opportunity.title,
-
-        opportunityUrl:
-          opportunity.url || "",
-
-        skills:
-          userProfile.skills || [],
-
-        outreachStatus:
-          "READY_FOR_REVIEW"
-      },
+      package:
+        outreach,
 
       validation: {
         valid: true,
@@ -98,11 +110,13 @@ export function prepareOpportunity(
       },
 
       nextAction:
-        "Review the customer details and prepare permitted outreach before sending."
+        "Review the customer details and outreach message before sending."
     };
   }
 
-  // REMOTE JOB
+  /**
+   * REMOTE JOB
+   */
   const application =
     prepareRemoteJobApplication(
       opportunity,
