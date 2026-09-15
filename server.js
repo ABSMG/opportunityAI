@@ -2,12 +2,28 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
+
 dotenv.config();
 
 const app = express();
 
-const PORT =
-  process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
+
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabase =
+  SUPABASE_URL &&
+  SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY
+      )
+    : null;
 
 app.use(
   cors({
@@ -22,7 +38,7 @@ app.use(
   })
 );
 
-/**
+/*
  * Health check
  */
 app.get("/api/health", (req, res) => {
@@ -30,35 +46,300 @@ app.get("/api/health", (req, res) => {
     success: true,
     service: "OpportunityAI",
     status: "online",
+    supabase:
+      Boolean(supabase),
+    ai:
+      Boolean(
+        process.env.GEMINI_API_KEY
+      ),
     timestamp:
       new Date().toISOString()
   });
 });
 
-/**
- * Basic API information
+/*
+ * API information
  */
 app.get("/api", (req, res) => {
   res.json({
     success: true,
     name: "OpportunityAI API",
     version: "1.0.0",
+
     features: [
       "opportunity-discovery",
       "ai-analysis",
       "outreach-preparation",
       "application-tracking",
-      "revenue-tracking"
+      "revenue-tracking",
+      "supabase-storage"
     ]
   });
 });
 
-/**
- * Analyze an opportunity.
- *
- * AI integration will be connected here
- * after the backend environment variables
- * are configured.
+/*
+ * Get opportunities
+ */
+app.get(
+  "/api/opportunities",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          error:
+            "Supabase is not configured."
+        });
+      }
+
+      const {
+        type = "all",
+        limit = "20"
+      } = req.query;
+
+      const allowedTypes = [
+        "all",
+        "remote_job",
+        "freelance",
+        "customer"
+      ];
+
+      if (
+        !allowedTypes.includes(type)
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid opportunity type."
+        });
+      }
+
+      const safeLimit = Math.min(
+        Math.max(
+          Number(limit) || 20,
+          1
+        ),
+        50
+      );
+
+      let query = supabase
+        .from("opportunities")
+        .select("*")
+        .order(
+          "opportunity_score",
+          {
+            ascending: false,
+            nullsFirst: false
+          }
+        )
+        .limit(safeLimit);
+
+      if (type !== "all") {
+        query = query.eq(
+          "type",
+          type
+        );
+      }
+
+      const {
+        data,
+        error
+      } = await query;
+
+      if (error) {
+        console.error(
+          "Supabase opportunity error:",
+          error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error:
+            "Unable to load opportunities."
+        });
+      }
+
+      return res.json({
+        success: true,
+        count: data?.length || 0,
+        type,
+        opportunities:
+          data || []
+      });
+    } catch (error) {
+      console.error(
+        "Opportunity API error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Unable to load opportunities."
+      });
+    }
+  }
+);
+
+/*
+ * Create an opportunity
+ */
+app.post(
+  "/api/opportunities",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+          error:
+            "Supabase is not configured."
+        });
+      }
+
+      const opportunity =
+        req.body;
+
+      if (
+        !opportunity ||
+        !opportunity.title
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Opportunity title is required."
+        });
+      }
+
+      const allowedTypes = [
+        "remote_job",
+        "freelance",
+        "customer"
+      ];
+
+      const type =
+        opportunity.type ||
+        "remote_job";
+
+      if (
+        !allowedTypes.includes(type)
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid opportunity type."
+        });
+      }
+
+      const record = {
+        owner_id:
+          opportunity.owner_id ||
+          null,
+
+        type,
+
+        title:
+          opportunity.title,
+
+        description:
+          opportunity.description ||
+          null,
+
+        company:
+          opportunity.company ||
+          null,
+
+        url:
+          opportunity.url ||
+          null,
+
+        payment:
+          opportunity.payment ??
+          null,
+
+        currency:
+          opportunity.currency ||
+          null,
+
+        remote:
+          opportunity.remote ??
+          true,
+
+        skills:
+          opportunity.skills ||
+          null,
+
+        deadline:
+          opportunity.deadline ||
+          null,
+
+        source:
+          opportunity.source ||
+          "unknown",
+
+        source_external_id:
+          opportunity.source_external_id ||
+          null,
+
+        match_score:
+          opportunity.match_score ??
+          null,
+
+        opportunity_score:
+          opportunity.opportunity_score ??
+          null,
+
+        ai_analysis:
+          opportunity.ai_analysis ||
+          null,
+
+        status:
+          opportunity.status ||
+          "NEW"
+      };
+
+      const {
+        data,
+        error
+      } = await supabase
+        .from("opportunities")
+        .insert(record)
+        .select()
+        .single();
+
+      if (error) {
+        console.error(
+          "Supabase insert error:",
+          error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error:
+            "Unable to save opportunity."
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        opportunity: data
+      });
+    } catch (error) {
+      console.error(
+        "Create opportunity error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Unable to create opportunity."
+      });
+    }
+  }
+);
+
+/*
+ * AI opportunity analysis
  */
 app.post(
   "/api/ai/analyze",
@@ -118,7 +399,8 @@ ${JSON.stringify(
   2
 )}
 
-Return ONLY valid JSON with:
+Return ONLY valid JSON:
+
 {
   "fitScore": 0,
   "earningPotential": "UNKNOWN",
@@ -131,9 +413,10 @@ Return ONLY valid JSON with:
 }
 
 Rules:
-- Do not guarantee income.
-- Do not invent payment or requirements.
-- If payment is unknown, say UNKNOWN.
+- Never guarantee income.
+- Never invent payment.
+- Never invent requirements.
+- If payment is unknown, use UNKNOWN.
 - Consider the user's actual skills.
 - Do not recommend violating platform rules.
 `;
@@ -168,22 +451,23 @@ Rules:
           matchedSkills: [],
           missingSkills: [],
           risks: [
-            "AI returned an invalid response."
+            "Invalid AI response."
           ],
           recommendedAction:
             "REVIEW_MANUALLY",
           reason:
-            "The opportunity requires manual review."
+            "Manual review is required."
         };
       }
 
       return res.json({
         success: true,
+
         opportunityId:
           opportunity.id || null,
+
         analysis
       });
-
     } catch (error) {
       console.error(
         "AI analysis error:",
@@ -199,66 +483,8 @@ Rules:
   }
 );
 
-  async (req, res) => {
-    try {
-      const {
-        opportunity,
-        userProfile
-      } = req.body;
-
-      if (!opportunity) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Opportunity is required."
-        });
-      }
-
-      if (!userProfile) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "User profile is required."
-        });
-      }
-
-      /*
-       * Gemini integration will be added
-       * on the server side.
-       *
-       * The API key must NEVER be sent
-       * from the frontend.
-       */
-
-      return res.json({
-        success: true,
-
-        status:
-          "AI_ANALYSIS_READY",
-
-        opportunityId:
-          opportunity.id || null,
-
-        message:
-          "Backend AI analysis endpoint is ready."
-      });
-    } catch (error) {
-      console.error(
-        "AI analysis error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        error:
-          "Unable to analyze opportunity."
-      });
-    }
-  }
-);
-
-/**
- * Prepare outreach request.
+/*
+ * Prepare outreach
  */
 app.post(
   "/api/outreach/prepare",
@@ -297,7 +523,7 @@ app.post(
           "digital services",
 
         message:
-          "Outreach preparation endpoint is ready for the next integration."
+          "Outreach prepared for review."
       });
     } catch (error) {
       console.error(
@@ -314,8 +540,8 @@ app.post(
   }
 );
 
-/**
- * Simple 404 handler for API routes.
+/*
+ * API 404
  */
 app.use(
   "/api",
@@ -328,8 +554,8 @@ app.use(
   }
 );
 
-/**
- * Global error handler.
+/*
+ * Global error handler
  */
 app.use(
   (error, req, res, next) => {
@@ -346,8 +572,11 @@ app.use(
   }
 );
 
-app.listen(PORT, () => {
-  console.log(
-    `OpportunityAI API running on port ${PORT}`
-  );
-});
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `OpportunityAI API running on port ${PORT}`
+    );
+  }
+);
