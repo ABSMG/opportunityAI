@@ -21,6 +21,21 @@ import {
   rankOpportunities
 } from "./src/services/opportunityEngine.js";
 
+// =====================================
+// AI TASK ENGINE
+// =====================================
+
+import {
+  createTask,
+  planTask,
+  executeTask,
+  approveTask,
+  markTaskSubmitted,
+  markTaskCompleted,
+  markTaskPaid,
+  getTaskStatus
+} from "./src/services/aiTaskEngine.js";
+
 const app = express();
 
 const PORT =
@@ -62,6 +77,18 @@ const supabase =
         SUPABASE_SECRET_KEY
       )
     : null;
+
+// =====================================
+// IN-MEMORY AI TASK STORE
+// =====================================
+//
+// MVP storage for the AI Task Engine.
+// This will later be moved to Supabase
+// after the task database schema is added.
+//
+
+const taskStore =
+  new Map();
 
 // =====================================
 // HELPERS
@@ -180,7 +207,10 @@ app.get(
       ai:
         Boolean(
           process.env.GEMINI_API_KEY
-        )
+        ),
+
+      taskEngine:
+        true
     });
   }
 );
@@ -211,7 +241,17 @@ app.get(
         "application-approval",
         "application-tracking",
         "supabase-storage",
-        "automation-runs"
+        "automation-runs",
+
+        // AI TASK ENGINE
+        "ai-task-planning",
+        "ai-task-execution",
+        "ai-task-quality-check",
+        "ai-task-review",
+        "ai-task-approval",
+        "ai-task-submission-tracking",
+        "ai-task-completion-tracking",
+        "ai-task-payment-tracking"
       ]
     });
   }
@@ -1931,6 +1971,522 @@ app.get(
       );
 
       return res.status(500).json({
+        success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// AI TASK ENGINE
+// =====================================
+
+// -------------------------------------
+// CREATE TASK
+// -------------------------------------
+
+app.post(
+  "/api/tasks",
+  async (req, res) => {
+    try {
+      const {
+        title,
+        description,
+        requirements = [],
+        context = {},
+        userProfile = {},
+        opportunityId = null,
+        metadata = {}
+      } = req.body || {};
+
+      if (
+        !title &&
+        !description
+      ) {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            "Task title or description is required."
+        });
+      }
+
+      const task =
+        createTask({
+          title:
+            title ||
+            "Untitled Task",
+
+          description:
+            description ||
+            "",
+
+          requirements,
+
+          context,
+
+          userProfile,
+
+          opportunityId,
+
+          metadata
+        });
+
+      taskStore.set(
+        task.id,
+        task
+      );
+
+      return res.status(201).json({
+        success: true,
+
+        message:
+          "AI task created successfully.",
+
+        task
+      });
+
+    } catch (error) {
+      console.error(
+        "Create AI task error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Could not create AI task.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// GET TASK
+// -------------------------------------
+
+app.get(
+  "/api/tasks/:id",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      return res.json({
+        success: true,
+
+        task:
+          getTaskStatus(task)
+      });
+
+    } catch (error) {
+      console.error(
+        "Get AI task error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Could not retrieve AI task.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// RUN TASK
+// -------------------------------------
+
+app.post(
+  "/api/tasks/:id/run",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      if (
+        task.status !==
+        "QUEUED"
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "Only QUEUED tasks can be started.",
+
+          currentStatus:
+            task.status
+        });
+      }
+
+      // ---------------------------------
+      // 1. AI PLAN
+      // ---------------------------------
+
+      console.log(
+        `AI Task Engine: planning task ${id}...`
+      );
+
+      const plannedTask =
+        await planTask(
+          task
+        );
+
+      taskStore.set(
+        id,
+        plannedTask
+      );
+
+      // ---------------------------------
+      // 2. EXECUTE
+      // ---------------------------------
+
+      console.log(
+        `AI Task Engine: executing task ${id}...`
+      );
+
+      const executedTask =
+        await executeTask(
+          plannedTask
+        );
+
+      taskStore.set(
+        id,
+        executedTask
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "AI task planned and executed.",
+
+        task:
+          getTaskStatus(
+            executedTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Run AI task error:",
+        error.message
+      );
+
+      const task =
+        taskStore.get(
+          req.params.id
+        );
+
+      if (task) {
+        task.status =
+          "FAILED";
+
+        task.error =
+          error.message;
+
+        task.updatedAt =
+          new Date().toISOString();
+
+        taskStore.set(
+          task.id,
+          task
+        );
+      }
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "AI task execution failed.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// APPROVE TASK
+// -------------------------------------
+
+app.post(
+  "/api/tasks/:id/approve",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      const approvedTask =
+        approveTask(
+          task
+        );
+
+      taskStore.set(
+        id,
+        approvedTask
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "AI task approved successfully.",
+
+        task:
+          getTaskStatus(
+            approvedTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Approve AI task error:",
+        error.message
+      );
+
+      return res.status(409).json({
+        success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// MARK TASK AS SUBMITTED
+// -------------------------------------
+
+app.post(
+  "/api/tasks/:id/submit",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      const submittedTask =
+        markTaskSubmitted(
+          task,
+          req.body || {}
+        );
+
+      taskStore.set(
+        id,
+        submittedTask
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Task marked as submitted.",
+
+        task:
+          getTaskStatus(
+            submittedTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Submit AI task error:",
+        error.message
+      );
+
+      return res.status(409).json({
+        success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// MARK TASK AS COMPLETED
+// -------------------------------------
+
+app.post(
+  "/api/tasks/:id/complete",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      const completedTask =
+        markTaskCompleted(
+          task,
+          req.body || {}
+        );
+
+      taskStore.set(
+        id,
+        completedTask
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Task marked as completed.",
+
+        task:
+          getTaskStatus(
+            completedTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Complete AI task error:",
+        error.message
+      );
+
+      return res.status(409).json({
+        success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
+// MARK TASK AS PAID
+// -------------------------------------
+
+app.post(
+  "/api/tasks/:id/paid",
+  async (req, res) => {
+    try {
+      const {
+        id
+      } = req.params;
+
+      const task =
+        taskStore.get(id);
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Task not found."
+        });
+      }
+
+      const paidTask =
+        markTaskPaid(
+          task,
+          req.body || {}
+        );
+
+      taskStore.set(
+        id,
+        paidTask
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Task marked as paid.",
+
+        task:
+          getTaskStatus(
+            paidTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Mark AI task paid error:",
+        error.message
+      );
+
+      return res.status(409).json({
         success: false,
 
         message:
