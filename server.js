@@ -672,7 +672,6 @@ async function loadOpportunityById(
 // LOAD TASK
 // =====================================
 
-
 async function loadTask(
   id,
   ownerId = null
@@ -707,6 +706,7 @@ async function loadTask(
 
   return task;
 }
+
 // =====================================
 // SAFE SUBMISSION PERSISTENCE
 // =====================================
@@ -2367,24 +2367,24 @@ app.get(
           req.userId
         );
 
-     const ownedTasks =
-  tasks.filter(
-    (task) =>
-      task.ownerId ===
-      req.userId
-  );
+      const ownedTasks =
+        tasks.filter(
+          (task) =>
+            task.ownerId ===
+            req.userId
+        );
 
-return res.json({
-  success: true,
+      return res.json({
+        success: true,
 
-  count:
-    ownedTasks.length,
+        count:
+          ownedTasks.length,
 
-  tasks:
-    ownedTasks.map(
-      serializeTask
-    )
-}); 
+        tasks:
+          ownedTasks.map(
+            serializeTask
+          )
+      });
     } catch (error) {
       console.error(
         "Get AI tasks error:",
