@@ -1,4 +1,13 @@
-import React, { useState } from "react";
+import React from "react";
+import TaskDashboard from "./components/TaskDashboard";
+
+export default function App() {
+return (
+<div id="opportunity-ai-app">
+<TaskDashboard />
+</div>
+);
+}
 import TaskDashboard from "./components/TaskDashboard";
 
 const API_BASE = "";
