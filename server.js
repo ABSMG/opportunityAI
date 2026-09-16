@@ -22,10 +22,6 @@ import {
   rankOpportunities
 } from "./src/services/opportunityEngine.js";
 
-// =====================================
-// AI TASK ENGINE
-// =====================================
-
 import {
   createTask,
   planTask,
@@ -36,10 +32,6 @@ import {
   markTaskPaid,
   getTaskStatus
 } from "./src/services/aiTaskEngine.js";
-
-// =====================================
-// SUPABASE AI TASK PERSISTENCE
-// =====================================
 
 import {
   persistTask,
@@ -98,6 +90,91 @@ const supabase =
 
 const taskStore =
   new Map();
+
+// =====================================
+// AUTHENTICATION
+// =====================================
+
+async function requireAuth(
+  req,
+  res,
+  next
+) {
+  try {
+    if (!supabase) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Supabase is not configured."
+      });
+    }
+
+    const authorization =
+      req.get("authorization") || "";
+
+    const match =
+      authorization.match(
+        /^Bearer\s+(.+)$/i
+      );
+
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Authentication required."
+      });
+    }
+
+    const token =
+      match[1].trim();
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Invalid authentication token."
+      });
+    }
+
+    const {
+      data,
+      error
+    } =
+      await supabase.auth.getUser(
+        token
+      );
+
+    if (
+      error ||
+      !data?.user
+    ) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Invalid or expired authentication token."
+      });
+    }
+
+    req.user =
+      data.user;
+
+    req.userId =
+      data.user.id;
+
+    next();
+  } catch (error) {
+    console.error(
+      "Authentication error:",
+      error.message
+    );
+
+    return res.status(401).json({
+      success: false,
+      message:
+        "Authentication failed."
+    });
+  }
+}
 
 // =====================================
 // HELPERS
@@ -221,7 +298,7 @@ function normalizeOpportunityForDatabase(
     ai_analysis:
       opportunity.aiAnalysis ||
       opportunity.ai_analysis ||
-      null,
+      {},
 
     status:
       opportunity.status ||
@@ -402,7 +479,10 @@ function requireUserConfirmation(
     true
   ) {
     const error =
-      new Error(message);
+      new Error(
+        message ||
+        "User confirmation is required."
+      );
 
     error.statusCode = 400;
 
@@ -410,12 +490,135 @@ function requireUserConfirmation(
   }
 }
 
+function validatePayment(body) {
+  const amount =
+    Number(
+      body?.amount
+    );
+
+  const currency =
+    String(
+      body?.currency || ""
+    )
+      .trim()
+      .toUpperCase();
+
+  const provider =
+    String(
+      body?.provider || ""
+    ).trim();
+
+  const paymentMethod =
+    String(
+      body?.paymentMethod ||
+      body?.payment_method ||
+      ""
+    ).trim();
+
+  const providerReference =
+    String(
+      body?.providerReference ||
+      body?.provider_reference ||
+      ""
+    ).trim();
+
+  const evidence =
+    body?.evidence ??
+    body?.proof ??
+    null;
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    return {
+      valid: false,
+      message:
+        "A valid positive payment amount is required."
+    };
+  }
+
+  if (!currency) {
+    return {
+      valid: false,
+      message:
+        "Payment currency is required."
+    };
+  }
+
+  if (!provider) {
+    return {
+      valid: false,
+      message:
+        "Payment provider is required."
+    };
+  }
+
+  if (!paymentMethod) {
+    return {
+      valid: false,
+      message:
+        "Payment method is required."
+    };
+  }
+
+  if (
+    !evidence ||
+    (
+      typeof evidence ===
+      "string" &&
+      !evidence.trim()
+    )
+  ) {
+    return {
+      valid: false,
+      message:
+        "Payment evidence or proof is required."
+    };
+  }
+
+  return {
+    valid: true,
+
+    payment: {
+      amount,
+
+      currency,
+
+      provider,
+
+      paymentMethod,
+
+      providerReference:
+        providerReference ||
+        null,
+
+      evidence,
+
+      confirmedByUser:
+        true,
+
+      status:
+        "PAID",
+
+      paidAt:
+        body?.paidAt ||
+        new Date().toISOString(),
+
+      notes:
+        body?.notes ||
+        null
+    }
+  };
+}
+
 // =====================================
 // LOAD OPPORTUNITY
 // =====================================
 
 async function loadOpportunityById(
-  id
+  id,
+  ownerId = null
 ) {
   if (!supabase) {
     throw new Error(
@@ -423,36 +626,40 @@ async function loadOpportunityById(
     );
   }
 
+  let query =
+    supabase
+      .from("opportunities")
+      .select("*");
+
   if (
     isValidUuid(id)
   ) {
-    const {
-      data,
-      error
-    } = await supabase
-      .from("opportunities")
-      .select("*")
-      .eq("id", id)
-      .maybeSingle();
+    query =
+      query.eq(
+        "id",
+        id
+      );
+  } else {
+    query =
+      query.eq(
+        "source_external_id",
+        id
+      );
+  }
 
-    if (error) {
-      throw error;
-    }
-
-    return data;
+  if (ownerId) {
+    query =
+      query.eq(
+        "owner_id",
+        ownerId
+      );
   }
 
   const {
     data,
     error
-  } = await supabase
-    .from("opportunities")
-    .select("*")
-    .eq(
-      "source_external_id",
-      id
-    )
-    .maybeSingle();
+  } =
+    await query.maybeSingle();
 
   if (error) {
     throw error;
@@ -465,7 +672,10 @@ async function loadOpportunityById(
 // LOAD TASK
 // =====================================
 
-async function loadTask(id) {
+async function loadTask(
+  id,
+  ownerId = null
+) {
   let task =
     null;
 
@@ -482,6 +692,16 @@ async function loadTask(id) {
   if (!task) {
     task =
       taskStore.get(id);
+  }
+
+  if (
+    task &&
+    ownerId &&
+    task.ownerId &&
+    task.ownerId !==
+      ownerId
+  ) {
+    return null;
   }
 
   return task;
@@ -501,15 +721,6 @@ async function persistSubmissionSafely(
       submission
     );
   } catch (error) {
-    /*
-     * PostgREST may temporarily have an
-     * old schema cache.
-     *
-     * confirmed_by_user has a database
-     * default, so retry without explicitly
-     * sending that column.
-     */
-
     if (
       !/confirmed_by_user/i.test(
         error?.message || ""
@@ -655,6 +866,9 @@ async function persistPaymentSafely(
           fallback.paid_at ||
           new Date().toISOString(),
 
+        confirmed_by_user:
+          true,
+
         evidence:
           fallback.evidence ||
           null,
@@ -675,7 +889,7 @@ async function persistPaymentSafely(
 }
 
 // =====================================
-// HEALTH
+// PUBLIC HEALTH
 // =====================================
 
 app.get(
@@ -708,7 +922,7 @@ app.get(
 );
 
 // =====================================
-// API ROOT
+// PUBLIC API ROOT
 // =====================================
 
 app.get(
@@ -721,7 +935,7 @@ app.get(
         "OpportunityAI API",
 
       version:
-        "2.0.0",
+        "2.1.0",
 
       capabilities: [
         "real-opportunity-discovery",
@@ -741,6 +955,15 @@ app.get(
       ]
     });
   }
+);
+
+// =====================================
+// AUTHENTICATE ALL PROTECTED API
+// =====================================
+
+app.use(
+  "/api",
+  requireAuth
 );
 
 // =====================================
@@ -773,6 +996,10 @@ app.get(
       } = await supabase
         .from("opportunities")
         .select("*")
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .order(
           "created_at",
           {
@@ -853,7 +1080,7 @@ app.post(
         return res.status(400).json({
           success: false,
           message:
-            "A real HTTP/HTTPS official opportunity URL is required. Demo or empty links are not accepted."
+            "A real HTTP/HTTPS official opportunity URL is required."
         });
       }
 
@@ -862,8 +1089,7 @@ app.post(
           opportunity,
           {
             ownerId:
-              opportunity.owner_id ||
-              opportunity.ownerId
+              req.userId
           }
         );
 
@@ -912,7 +1138,8 @@ app.get(
     try {
       const opportunity =
         await loadOpportunityById(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!opportunity) {
@@ -931,7 +1158,7 @@ app.get(
         return res.status(409).json({
           success: false,
           message:
-            "This opportunity does not have a valid official URL and cannot be submitted."
+            "This opportunity does not have a valid official URL."
         });
       }
 
@@ -981,7 +1208,8 @@ app.post(
 
       const opportunity =
         await loadOpportunityById(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!opportunity) {
@@ -1000,13 +1228,18 @@ app.post(
         return res.status(409).json({
           success: false,
           message:
-            "This opportunity has no valid official URL. It cannot enter the real submission workflow."
+            "This opportunity has no valid official URL."
         });
       }
 
       const userProfile =
-        req.body?.userProfile ||
-        {};
+        {
+          ...(req.body?.userProfile ||
+            {}),
+
+          ownerId:
+            req.userId
+        };
 
       const preparation =
         await prepareOpportunity(
@@ -1053,6 +1286,10 @@ app.post(
             "opportunity_id",
             opportunity.id
           )
+          .eq(
+            "owner_id",
+            req.userId
+          )
           .order(
             "created_at",
             {
@@ -1085,6 +1322,9 @@ app.post(
                 opportunity.deadline ||
                 null,
 
+              official_url:
+                opportunity.url,
+
               status:
                 "READY_FOR_REVIEW",
 
@@ -1094,6 +1334,10 @@ app.post(
             .eq(
               "id",
               existingApplication.id
+            )
+            .eq(
+              "owner_id",
+              req.userId
             )
             .select()
             .single();
@@ -1114,14 +1358,16 @@ app.post(
             )
             .insert({
               owner_id:
-                userProfile.ownerId ||
-                null,
+                req.userId,
 
               opportunity_id:
                 opportunity.id,
 
               status:
                 "READY_FOR_REVIEW",
+
+              official_url:
+                opportunity.url,
 
               proposal,
 
@@ -1162,6 +1408,10 @@ app.post(
         .eq(
           "id",
           opportunity.id
+        )
+        .eq(
+          "owner_id",
+          req.userId
         )
         .select()
         .single();
@@ -1247,6 +1497,10 @@ app.get(
             status
           )
         `)
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .order(
           "created_at",
           {
@@ -1333,6 +1587,10 @@ app.get(
           "id",
           req.params.id
         )
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .maybeSingle();
 
       if (error) {
@@ -1413,6 +1671,10 @@ app.post(
           "id",
           req.params.id
         )
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .maybeSingle();
 
       if (findError) {
@@ -1468,12 +1730,20 @@ app.post(
           status:
             "APPROVED",
 
+          official_url:
+            application.opportunities
+              .url,
+
           updated_at:
             new Date().toISOString()
         })
         .eq(
           "id",
           req.params.id
+        )
+        .eq(
+          "owner_id",
+          req.userId
         )
         .select()
         .single();
@@ -1564,6 +1834,10 @@ app.post(
           "id",
           req.params.id
         )
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .maybeSingle();
 
       if (findError) {
@@ -1609,6 +1883,18 @@ app.post(
       const now =
         new Date().toISOString();
 
+      const reference =
+        String(
+          req.body?.reference ||
+          ""
+        ).trim();
+
+      const notes =
+        String(
+          req.body?.notes ||
+          ""
+        ).trim();
+
       const {
         data:
           appliedApplication,
@@ -1622,6 +1908,21 @@ app.post(
           status:
             "APPLIED",
 
+          official_url:
+            application.opportunities
+              .url,
+
+          reference:
+            reference ||
+            null,
+
+          notes:
+            notes ||
+            null,
+
+          confirmed_by_user:
+            true,
+
           applied_at:
             req.body?.submittedAt ||
             now,
@@ -1632,6 +1933,10 @@ app.post(
         .eq(
           "id",
           req.params.id
+        )
+        .eq(
+          "owner_id",
+          req.userId
         )
         .select()
         .single();
@@ -1660,6 +1965,10 @@ app.post(
           .eq(
             "id",
             application.opportunity_id
+          )
+          .eq(
+            "owner_id",
+            req.userId
           );
 
         if (opportunityError) {
@@ -1680,7 +1989,7 @@ app.post(
           application.opportunities.url,
 
         submissionReference:
-          req.body?.reference ||
+          reference ||
           null,
 
         nextAction:
@@ -1689,7 +1998,7 @@ app.post(
     } catch (error) {
       return res.status(
         error.statusCode ||
-          409
+        409
       ).json({
         success: false,
         message:
@@ -1731,6 +2040,14 @@ app.post(
       } =
         req.body || {};
 
+      const safeUserProfile =
+        {
+          ...userProfile,
+
+          ownerId:
+            req.userId
+        };
+
       const {
         data:
           runData,
@@ -1742,8 +2059,7 @@ app.post(
         )
         .insert({
           owner_id:
-            userProfile.ownerId ||
-            null,
+            req.userId,
 
           run_type:
             "OPPORTUNITY_SCAN",
@@ -1780,11 +2096,6 @@ app.post(
             : defaultSources
         );
 
-      /*
-       * REAL OPPORTUNITY RULE:
-       * no HTTP/HTTPS URL = do not save,
-       * rank or expose as a usable opportunity.
-       */
       const realOpportunities =
         discovered.filter(
           (item) =>
@@ -1796,13 +2107,13 @@ app.post(
       const analyzed =
         await analyzeOpportunities(
           realOpportunities,
-          userProfile
+          safeUserProfile
         );
 
       const ranked =
         rankOpportunities(
           analyzed,
-          userProfile
+          safeUserProfile
         );
 
       let saved = [];
@@ -1823,7 +2134,7 @@ app.post(
               (item) =>
                 normalizeOpportunityForDatabase(
                   item,
-                  userProfile
+                  safeUserProfile
                 )
             );
 
@@ -1883,6 +2194,10 @@ app.post(
           .eq(
             "id",
             automationRunId
+          )
+          .eq(
+            "owner_id",
+            req.userId
           );
       }
 
@@ -1956,6 +2271,10 @@ app.post(
           .eq(
             "id",
             automationRunId
+          )
+          .eq(
+            "owner_id",
+            req.userId
           );
       }
 
@@ -1996,6 +2315,10 @@ app.get(
           "automation_runs"
         )
         .select("*")
+        .eq(
+          "owner_id",
+          req.userId
+        )
         .order(
           "created_at",
           {
@@ -2039,23 +2362,27 @@ app.get(
         });
       }
 
-      const ownerId =
-        req.query.ownerId ||
-        null;
-
       const tasks =
         await listTasksFromSupabase(
-          ownerId
+          req.userId
+        );
+
+      const ownedTasks =
+        tasks.filter(
+          (task) =>
+            !task.ownerId ||
+            task.ownerId ===
+              req.userId
         );
 
       return res.json({
         success: true,
 
         count:
-          tasks.length,
+          ownedTasks.length,
 
         tasks:
-          tasks.map(
+          ownedTasks.map(
             serializeTask
           )
       });
@@ -2117,9 +2444,6 @@ app.post(
         type =
           "general",
 
-        ownerId =
-          null,
-
         metadata =
           {}
       } =
@@ -2145,7 +2469,8 @@ app.post(
       ) {
         opportunity =
           await loadOpportunityById(
-            opportunityId
+            opportunityId,
+            req.userId
           );
 
         if (!opportunity) {
@@ -2184,69 +2509,72 @@ app.post(
         });
       }
 
-      let task =
-        createTask({
-          title:
-            title ||
-            opportunity?.title ||
-            "Untitled Task",
-
-          description:
-            description ||
-            opportunity?.description ||
-            "",
-
-          type,
-
-          source,
-
-          ownerId,
-
-          metadata: {
-            ...metadata,
-
-            requirements,
-
-            context,
-
-            userProfile,
-
-            opportunityId:
-              opportunity?.id ||
-              opportunityId ||
-              null,
-
-            officialUrl,
-
-            officialSite:
-              opportunity?.source ||
-              metadata.platform ||
-              null,
-
-            company:
-              opportunity?.company ||
-              metadata.company ||
-              null,
-
-            sourceExternalId:
-              opportunity?.source_external_id ||
-              null,
-
-            paymentOffered:
-              opportunity?.payment ??
-              metadata.paymentOffered ??
-              null,
-
-            paymentCurrency:
-              opportunity?.currency ||
-              metadata.paymentCurrency ||
-              null
-          }
-        });
-
-      task =
+      const task =
         ensureTaskUuid(
-          task
+          createTask({
+            title:
+              title ||
+              opportunity?.title ||
+              "Untitled Task",
+
+            description:
+              description ||
+              opportunity?.description ||
+              "",
+
+            type,
+
+            source,
+
+            ownerId:
+              req.userId,
+
+            metadata: {
+              ...metadata,
+
+              requirements,
+
+              context,
+
+              userProfile: {
+                ...userProfile,
+
+                ownerId:
+                  req.userId
+              },
+
+              opportunityId:
+                opportunity?.id ||
+                opportunityId ||
+                null,
+
+              officialUrl,
+
+              officialSite:
+                opportunity?.source ||
+                metadata.platform ||
+                null,
+
+              company:
+                opportunity?.company ||
+                metadata.company ||
+                null,
+
+              sourceExternalId:
+                opportunity?.source_external_id ||
+                null,
+
+              paymentOffered:
+                opportunity?.payment ??
+                metadata.paymentOffered ??
+                null,
+
+              paymentCurrency:
+                opportunity?.currency ||
+                metadata.paymentCurrency ||
+                null
+            }
+          })
         );
 
       const savedTask =
@@ -2320,7 +2648,8 @@ app.get(
     try {
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!task) {
@@ -2364,7 +2693,8 @@ app.get(
     try {
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!task) {
@@ -2429,7 +2759,10 @@ app.post(
         req.params.id;
 
       let task =
-        await loadTask(id);
+        await loadTask(
+          id,
+          req.userId
+        );
 
       if (!task) {
         return res.status(404).json({
@@ -2468,7 +2801,7 @@ app.post(
           success: false,
 
           message:
-            "This external task has no real official URL. It cannot run as a real opportunity task."
+            "This external task has no real official URL."
         });
       }
 
@@ -2561,7 +2894,8 @@ app.post(
 
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         ).catch(
           () => null
         );
@@ -2619,14 +2953,7 @@ app.post(
           "AI task execution failed.",
 
         error:
-          error.message,
-
-        task:
-          task
-            ? serializeTask(
-                task
-              )
-            : null
+          error.message
       });
     }
   }
@@ -2642,7 +2969,8 @@ app.post(
     try {
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!task) {
@@ -2674,8 +3002,16 @@ app.post(
       const approvedTask =
         approveTask(
           task,
-          req.body || {}
+          {
+            ...(req.body || {}),
+
+            ownerId:
+              req.userId
+          }
         );
+
+      approvedTask.approvedBy =
+        req.userId;
 
       const savedTask =
         await persistTask(
@@ -2694,7 +3030,10 @@ app.post(
 
         "TASK_APPROVED",
 
-        req.body || {},
+        {
+          approvedBy:
+            req.userId
+        },
 
         task.status
       );
@@ -2740,7 +3079,8 @@ app.post(
     try {
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!task) {
@@ -2804,14 +3144,6 @@ app.post(
 
         submittedAt
       };
-
-      /*
-       * Persist the submission FIRST.
-       *
-       * If persistence fails, the task
-       * remains APPROVED and is not falsely
-       * marked SUBMITTED.
-       */
 
       await persistSubmissionSafely(
         task,
@@ -2892,7 +3224,8 @@ app.post(
     try {
       const task =
         await loadTask(
-          req.params.id
+          req.params.id,
+          req.userId
         );
 
       if (!task) {
@@ -2924,10 +3257,21 @@ app.post(
         "Completion must be confirmed after the provider accepts or confirms the work."
       );
 
+      const completion = {
+        ...(req.body || {}),
+
+        confirmedByUser:
+          true,
+
+        completedAt:
+          req.body?.completedAt ||
+          new Date().toISOString()
+      };
+
       const completedTask =
         markTaskCompleted(
           task,
-          req.body || {}
+          completion
         );
 
       const savedTask =
@@ -2947,7 +3291,7 @@ app.post(
 
         "TASK_COMPLETED",
 
-        req.body || {},
+        completion,
 
         task.status
       );
@@ -2973,3 +3317,276 @@ app.post(
         409
       ).json({
         success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// VERIFIED PAYMENT
+// =====================================
+
+app.post(
+  "/api/tasks/:id/pay",
+  async (req, res) => {
+    try {
+      const task =
+        await loadTask(
+          req.params.id,
+          req.userId
+        );
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Task not found."
+        });
+      }
+
+      if (
+        task.status !==
+        "COMPLETED"
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "Only completed tasks can be marked as paid.",
+
+          currentStatus:
+            task.status
+        });
+      }
+
+      requireUserConfirmation(
+        req.body,
+
+        "Confirm that the payment was actually received before marking the task as PAID."
+      );
+
+      const validation =
+        validatePayment(
+          req.body
+        );
+
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            validation.message
+        });
+      }
+
+      const payment =
+        validation.payment;
+
+      await persistPaymentSafely(
+        task,
+        payment
+      );
+
+      const paidTask =
+        markTaskPaid(
+          task,
+          payment
+        );
+
+      paidTask.ownerId =
+        task.ownerId ||
+        req.userId;
+
+      const savedTask =
+        await persistTask(
+          paidTask
+        );
+
+      taskStore.set(
+        task.id,
+        savedTask ||
+        paidTask
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        paidTask,
+
+        "TASK_PAID",
+
+        {
+          amount:
+            payment.amount,
+
+          currency:
+            payment.currency,
+
+          provider:
+            payment.provider,
+
+          paymentMethod:
+            payment.paymentMethod,
+
+          providerReference:
+            payment.providerReference,
+
+          confirmedByUser:
+            true
+        },
+
+        task.status
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Payment recorded and task marked as PAID.",
+
+        task:
+          serializeTask(
+            savedTask ||
+            paidTask
+          ),
+
+        payment
+      });
+    } catch (error) {
+      console.error(
+        "Payment error:",
+        error.message
+      );
+
+      return res.status(
+        error.statusCode ||
+        409
+      ).json({
+        success: false,
+
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// SERVE FRONTEND
+// =====================================
+
+const frontendPath =
+  path.join(
+    __dirname,
+    "dist"
+  );
+
+app.use(
+  express.static(
+    frontendPath
+  )
+);
+
+app.get(
+  "*splat",
+  (req, res, next) => {
+    if (
+      req.path.startsWith(
+        "/api/"
+      ) ||
+      req.path ===
+        "/api"
+    ) {
+      return next();
+    }
+
+    res.sendFile(
+      path.join(
+        frontendPath,
+        "index.html"
+      ),
+      (error) => {
+        if (error) {
+          next();
+        }
+      }
+    );
+  }
+);
+
+// =====================================
+// API 404
+// =====================================
+
+app.use(
+  "/api",
+  (req, res) => {
+    res.status(404).json({
+      success: false,
+
+      message:
+        "API endpoint not found.",
+
+      path:
+        req.originalUrl
+    });
+  }
+);
+
+// =====================================
+// GLOBAL ERROR HANDLER
+// =====================================
+
+app.use(
+  (error, req, res, next) => {
+    console.error(
+      "Unhandled server error:",
+      error
+    );
+
+    if (
+      res.headersSent
+    ) {
+      return next(error);
+    }
+
+    res.status(
+      error.statusCode ||
+      500
+    ).json({
+      success: false,
+
+      message:
+        error.message ||
+        "Internal server error."
+    });
+  }
+);
+
+// =====================================
+// START SERVER
+// =====================================
+
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `OpportunityAI server running on port ${PORT}`
+    );
+
+    console.log(
+      `Supabase configured: ${Boolean(
+        supabase
+      )}`
+    );
+
+    console.log(
+      `Gemini configured: ${Boolean(
+        process.env.GEMINI_API_KEY
+      )}`
+    );
+  }
+);
