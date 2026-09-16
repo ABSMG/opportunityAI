@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import { randomUUID } from "crypto";
+
 import { prepareOpportunity } from "./src/services/preparationService.js";
 
 import express from "express";
@@ -119,6 +121,25 @@ function isValidUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
   );
+}
+
+function ensureTaskUuid(task) {
+  if (!task) {
+    return task;
+  }
+
+  if (
+    isValidUuid(task.id)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+
+    id:
+      randomUUID()
+  };
 }
 
 function normalizeOpportunityForDatabase(
@@ -2115,7 +2136,7 @@ app.post(
         });
       }
 
-      const task =
+      let task =
         createTask({
           title:
             title ||
@@ -2143,6 +2164,18 @@ app.post(
             opportunityId
           }
         });
+
+      /*
+       * ai_tasks.id is UUID in Supabase.
+       *
+       * The task engine may generate a
+       * runtime identifier, so normalize it
+       * to UUID before persistence.
+       */
+      task =
+        ensureTaskUuid(
+          task
+        );
 
       /*
        * Supabase is now the persistent
@@ -2670,7 +2703,22 @@ app.post(
       /*
        * External submission must remain
        * human-controlled.
+       *
+       * The user must explicitly confirm
+       * that the external submission happened.
        */
+      if (
+        req.body?.confirmedByUser !==
+        true
+      ) {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            "Submission must be confirmed by the user before it can be marked as submitted."
+        });
+      }
+
       const submittedTask =
         markTaskSubmitted(
           task,
@@ -2695,7 +2743,6 @@ app.post(
           ...(req.body || {}),
 
           confirmedByUser:
-            req.body?.confirmedByUser ??
             true
         }
       );
@@ -2874,7 +2921,8 @@ app.post(
        * without actual user confirmation.
        */
       if (
-        !req.body?.confirmedByUser
+        req.body?.confirmedByUser !==
+        true
       ) {
         return res.status(400).json({
           success: false,
