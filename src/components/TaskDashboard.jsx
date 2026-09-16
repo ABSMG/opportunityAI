@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 
 const API_BASE = "";
@@ -63,8 +62,11 @@ export default function TaskDashboard() {
   /*
    * Load tasks directly through the backend.
    * Backend reads the tasks from Supabase.
+   *
+   * selectedTaskId allows the Dashboard to keep the
+   * currently selected task after refreshing the list.
    */
-  const loadTasks = async () => {
+  const loadTasks = async (selectedTaskId = null) => {
     setTasksLoading(true);
     setError("");
 
@@ -78,11 +80,40 @@ export default function TaskDashboard() {
       setTasks(loadedTasks);
 
       /*
-       * If there is no currently selected task,
-       * show the newest task when available.
+       * Preserve the task that is currently selected.
+       * If a selectedTaskId was explicitly supplied,
+       * use that task after loading.
        */
-      if (!task && loadedTasks.length > 0) {
-        setTask(loadedTasks[0]);
+      if (loadedTasks.length > 0) {
+        setTask((currentTask) => {
+          const preferredId =
+            selectedTaskId || currentTask?.id || null;
+
+          if (preferredId) {
+            const matchingTask = loadedTasks.find(
+              (savedTask) =>
+                savedTask.id === preferredId
+            );
+
+            if (matchingTask) {
+              return matchingTask;
+            }
+          }
+
+          /*
+           * If there is no valid current selection,
+           * show the newest task.
+           */
+          return currentTask || loadedTasks[0];
+        });
+      } else {
+        /*
+         * Only clear the selection when there are
+         * genuinely no tasks in Supabase.
+         */
+        setTask((currentTask) =>
+          currentTask?.id ? currentTask : null
+        );
       }
     } catch (err) {
       setError(err.message);
@@ -134,12 +165,33 @@ export default function TaskDashboard() {
 
       const createdTask = data.task || data;
 
+      /*
+       * Immediately select the newly created task.
+       */
       setTask(createdTask);
 
       /*
-       * Refresh the list from Supabase after creation.
+       * Refresh the list from Supabase while explicitly
+       * preserving/selecting the newly created task.
        */
-      await loadTasks();
+      await loadTasks(createdTask?.id || null);
+
+      /*
+       * Ensure the created task remains selected even
+       * if the returned list has changed order.
+       */
+      setTask((currentTask) => {
+        if (createdTask?.id) {
+          const savedCreatedTask = tasks.find(
+            (savedTask) =>
+              savedTask.id === createdTask.id
+          );
+
+          return savedCreatedTask || currentTask || createdTask;
+        }
+
+        return currentTask || createdTask;
+      });
 
       setMessage("Task created successfully.");
 
@@ -153,28 +205,78 @@ export default function TaskDashboard() {
     }
   };
 
-  const selectTask = (selectedTask) => {
+  const selectTask = async (selectedTask) => {
+    if (!selectedTask?.id) return;
+
     setTask(selectedTask);
     setError("");
     setMessage("");
-  };
 
-  const refreshTask = async () => {
-    if (!task?.id) return;
-
-    setActionLoading("refresh");
-    setError("");
-
+    /*
+     * If the selected task is only a list snapshot,
+     * fetch the latest version from the backend.
+     */
     try {
-      const data = await request(`/api/tasks/${task.id}`);
+      const data = await request(
+        `/api/tasks/${selectedTask.id}`
+      );
+
       const refreshedTask = data.task || data;
 
       setTask(refreshedTask);
 
       /*
-       * Keep the Dashboard list synchronized with Supabase.
+       * Update the list item with the latest task data
+       * without losing the user's selection.
        */
-      await loadTasks();
+      setTasks((currentTasks) =>
+        currentTasks.map((savedTask) =>
+          savedTask.id === refreshedTask.id
+            ? refreshedTask
+            : savedTask
+        )
+      );
+    } catch (err) {
+      /*
+       * Keep the selected list task visible if the
+       * individual refresh fails.
+       */
+      setTask(selectedTask);
+      setError(err.message);
+    }
+  };
+
+  const refreshTask = async () => {
+    if (!task?.id) return;
+
+    const selectedTaskId = task.id;
+
+    setActionLoading("refresh");
+    setError("");
+
+    try {
+      const data = await request(
+        `/api/tasks/${selectedTaskId}`
+      );
+
+      const refreshedTask = data.task || data;
+
+      setTask(refreshedTask);
+
+      /*
+       * Keep the Dashboard list synchronized with Supabase
+       * while preserving the current selection.
+       */
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || refreshedTask;
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -185,18 +287,34 @@ export default function TaskDashboard() {
   const runTask = async () => {
     if (!task?.id) return;
 
+    const selectedTaskId = task.id;
+
     setActionLoading("run");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(`/api/tasks/${task.id}/run`, {
-        method: "POST",
+      const data = await request(
+        `/api/tasks/${selectedTaskId}/run`,
+        {
+          method: "POST",
+        }
+      );
+
+      const updatedTask = data.task || data;
+
+      setTask(updatedTask);
+
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || updatedTask;
       });
-
-      setTask(data.task || data);
-
-      await loadTasks();
 
       setMessage(
         "Task executed. Review the result before approving."
@@ -211,22 +329,38 @@ export default function TaskDashboard() {
   const approveTask = async () => {
     if (!task?.id) return;
 
+    const selectedTaskId = task.id;
+
     setActionLoading("approve");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(`/api/tasks/${task.id}/approve`, {
-        method: "POST",
-        body: JSON.stringify({
-          approvedBy: "user",
-          note: "Approved by task owner.",
-        }),
+      const data = await request(
+        `/api/tasks/${selectedTaskId}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            approvedBy: "user",
+            note: "Approved by task owner.",
+          }),
+        }
+      );
+
+      const updatedTask = data.task || data;
+
+      setTask(updatedTask);
+
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || updatedTask;
       });
-
-      setTask(data.task || data);
-
-      await loadTasks();
 
       setMessage("Task approved.");
     } catch (err) {
@@ -247,24 +381,40 @@ export default function TaskDashboard() {
       return;
     }
 
+    const selectedTaskId = task.id;
+
     setActionLoading("submit");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(`/api/tasks/${task.id}/submit`, {
-        method: "POST",
-        body: JSON.stringify({
-          submittedBy: "user",
-          method: "manual",
-          confirmedByUser: true,
-          note: "Submitted through the permitted external platform.",
-        }),
+      const data = await request(
+        `/api/tasks/${selectedTaskId}/submit`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            submittedBy: "user",
+            method: "manual",
+            confirmedByUser: true,
+            note: "Submitted through the permitted external platform.",
+          }),
+        }
+      );
+
+      const updatedTask = data.task || data;
+
+      setTask(updatedTask);
+
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || updatedTask;
       });
-
-      setTask(data.task || data);
-
-      await loadTasks();
 
       setMessage("Task marked as submitted.");
     } catch (err) {
@@ -277,22 +427,38 @@ export default function TaskDashboard() {
   const completeTask = async () => {
     if (!task?.id) return;
 
+    const selectedTaskId = task.id;
+
     setActionLoading("complete");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(`/api/tasks/${task.id}/complete`, {
-        method: "POST",
-        body: JSON.stringify({
-          completedBy: "user",
-          result: "Task completed.",
-        }),
+      const data = await request(
+        `/api/tasks/${selectedTaskId}/complete`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            completedBy: "user",
+            result: "Task completed.",
+          }),
+        }
+      );
+
+      const updatedTask = data.task || data;
+
+      setTask(updatedTask);
+
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || updatedTask;
       });
-
-      setTask(data.task || data);
-
-      await loadTasks();
 
       setMessage("Task marked as completed.");
     } catch (err) {
@@ -313,23 +479,39 @@ export default function TaskDashboard() {
       return;
     }
 
+    const selectedTaskId = task.id;
+
     setActionLoading("paid");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(`/api/tasks/${task.id}/paid`, {
-        method: "POST",
-        body: JSON.stringify({
-          recordedBy: "user",
-          status: "PAID",
-          confirmedByUser: true,
-        }),
+      const data = await request(
+        `/api/tasks/${selectedTaskId}/paid`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            recordedBy: "user",
+            status: "PAID",
+            confirmedByUser: true,
+          }),
+        }
+      );
+
+      const updatedTask = data.task || data;
+
+      setTask(updatedTask);
+
+      await loadTasks(selectedTaskId);
+
+      setTask((currentTask) => {
+        const matchingTask = tasks.find(
+          (savedTask) =>
+            savedTask.id === selectedTaskId
+        );
+
+        return matchingTask || currentTask || updatedTask;
       });
-
-      setTask(data.task || data);
-
-      await loadTasks();
 
       setMessage("Payment recorded.");
     } catch (err) {
