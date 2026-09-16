@@ -243,7 +243,6 @@ app.get(
         "supabase-storage",
         "automation-runs",
 
-        // AI TASK ENGINE
         "ai-task-planning",
         "ai-task-execution",
         "ai-task-quality-check",
@@ -268,7 +267,6 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -318,7 +316,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message
       });
@@ -337,7 +334,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -352,7 +348,6 @@ app.post(
       ) {
         return res.status(400).json({
           success: false,
-
           message:
             "Opportunity title is required."
         });
@@ -444,7 +439,6 @@ app.post(
 
       return res.status(201).json({
         success: true,
-
         opportunity:
           data
       });
@@ -457,7 +451,6 @@ app.post(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message
       });
@@ -476,7 +469,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -489,10 +481,6 @@ app.post(
       const {
         userProfile = {}
       } = req.body || {};
-
-      // ---------------------------------
-      // FIND OPPORTUNITY
-      // ---------------------------------
 
       let opportunity =
         null;
@@ -547,25 +535,16 @@ app.post(
       if (!opportunity) {
         return res.status(404).json({
           success: false,
-
           message:
             "Opportunity not found."
         });
       }
-
-      // ---------------------------------
-      // PREPARE WITH AI
-      // ---------------------------------
 
       const preparation =
         await prepareOpportunity(
           opportunity,
           userProfile
         );
-
-      // ---------------------------------
-      // SAVE APPLICATION
-      // ---------------------------------
 
       let savedPreparation =
         null;
@@ -591,8 +570,6 @@ app.post(
               new Date().toISOString()
           });
 
-        // Check whether an
-        // application already exists.
         const {
           data:
             existingApplication,
@@ -701,10 +678,6 @@ app.post(
             createdApplication;
         }
       }
-
-      // ---------------------------------
-      // SAVE CUSTOMER OUTREACH
-      // ---------------------------------
 
       if (
         opportunity.type ===
@@ -839,10 +812,6 @@ app.post(
         }
       }
 
-      // ---------------------------------
-      // UPDATE OPPORTUNITY
-      // ---------------------------------
-
       const {
         data:
           updatedOpportunity,
@@ -871,10 +840,6 @@ app.post(
       ) {
         throw opportunityUpdateError;
       }
-
-      // ---------------------------------
-      // RESPONSE
-      // ---------------------------------
 
       return res.json({
         success: true,
@@ -923,7 +888,6 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -981,7 +945,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message
       });
@@ -1000,7 +963,6 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -1015,7 +977,6 @@ app.get(
       ) {
         return res.status(400).json({
           success: false,
-
           message:
             "Invalid application ID."
         });
@@ -1057,7 +1018,6 @@ app.get(
       if (!data) {
         return res.status(404).json({
           success: false,
-
           message:
             "Application not found."
         });
@@ -1078,7 +1038,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message
       });
@@ -1097,7 +1056,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -1112,15 +1070,10 @@ app.post(
       ) {
         return res.status(400).json({
           success: false,
-
           message:
             "Invalid application ID."
         });
       }
-
-      // ---------------------------------
-      // FIND APPLICATION
-      // ---------------------------------
 
       const {
         data:
@@ -1145,15 +1098,10 @@ app.post(
       if (!application) {
         return res.status(404).json({
           success: false,
-
           message:
             "Application not found."
         });
       }
-
-      // ---------------------------------
-      // APPROVAL CHECK
-      // ---------------------------------
 
       if (
         application.status !==
@@ -1169,10 +1117,6 @@ app.post(
             application.status
         });
       }
-
-      // ---------------------------------
-      // APPROVE
-      // ---------------------------------
 
       const {
         data:
@@ -1244,7 +1188,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -1259,15 +1202,10 @@ app.post(
       ) {
         return res.status(400).json({
           success: false,
-
           message:
             "Invalid application ID."
         });
       }
-
-      // ---------------------------------
-      // FIND APPLICATION
-      // ---------------------------------
 
       const {
         data:
@@ -1301,15 +1239,10 @@ app.post(
       if (!application) {
         return res.status(404).json({
           success: false,
-
           message:
             "Application not found."
         });
       }
-
-      // ---------------------------------
-      // APPROVAL REQUIRED
-      // ---------------------------------
 
       if (
         application.status !==
@@ -1325,10 +1258,6 @@ app.post(
             application.status
         });
       }
-
-      // ---------------------------------
-      // MARK APPLICATION AS APPLIED
-      // ---------------------------------
 
       const {
         data:
@@ -1361,10 +1290,6 @@ app.post(
       ) {
         throw updateApplicationError;
       }
-
-      // ---------------------------------
-      // UPDATE OPPORTUNITY
-      // ---------------------------------
 
       let updatedOpportunity =
         null;
@@ -1457,7 +1382,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -1472,10 +1396,6 @@ app.post(
         save = true
       } =
         req.body || {};
-
-      // ---------------------------------
-      // 1. START AUTOMATION RUN
-      // ---------------------------------
 
       const {
         data: runData,
@@ -1517,10 +1437,6 @@ app.post(
           runData.id;
       }
 
-      // ---------------------------------
-      // 2. DISCOVER
-      // ---------------------------------
-
       console.log(
         "OpportunityAI scanner: starting discovery..."
       );
@@ -1537,10 +1453,6 @@ app.post(
       console.log(
         `OpportunityAI scanner: discovered ${discovered.length} opportunities.`
       );
-
-      // ---------------------------------
-      // NO RESULTS
-      // ---------------------------------
 
       if (
         !discovered.length
@@ -1607,10 +1519,6 @@ app.post(
         });
       }
 
-      // ---------------------------------
-      // 3. AI ANALYZE
-      // ---------------------------------
-
       console.log(
         `OpportunityAI scanner: analyzing ${discovered.length} opportunities...`
       );
@@ -1625,10 +1533,6 @@ app.post(
         `OpportunityAI scanner: analyzed ${analyzed.length} opportunities.`
       );
 
-      // ---------------------------------
-      // 4. MATCH + RANK
-      // ---------------------------------
-
       const ranked =
         rankOpportunities(
           analyzed,
@@ -1638,10 +1542,6 @@ app.post(
       console.log(
         `OpportunityAI scanner: ranked ${ranked.length} opportunities.`
       );
-
-      // ---------------------------------
-      // 5. SAVE TO SUPABASE
-      // ---------------------------------
 
       let saved = [];
 
@@ -1683,11 +1583,6 @@ app.post(
           `OpportunityAI scanner: saved ${saved.length} opportunities.`
         );
       }
-
-      // ---------------------------------
-      // 6. CONNECT SAVED DB IDs
-      //    BACK TO RANKED RESULTS
-      // ---------------------------------
 
       const savedByExternalId =
         new Map();
@@ -1752,10 +1647,6 @@ app.post(
           }
         );
 
-      // ---------------------------------
-      // 7. COMPLETE AUTOMATION RUN
-      // ---------------------------------
-
       if (
         automationRunId
       ) {
@@ -1804,10 +1695,6 @@ app.post(
         }
       }
 
-      // ---------------------------------
-      // 8. RESPONSE
-      // ---------------------------------
-
       return res.json({
         success: true,
 
@@ -1839,10 +1726,6 @@ app.post(
         "Scanner error:",
         error.message
       );
-
-      // ---------------------------------
-      // MARK AUTOMATION RUN AS FAILED
-      // ---------------------------------
 
       if (
         supabase &&
@@ -1930,7 +1813,6 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -1972,7 +1854,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message
       });
@@ -2025,7 +1906,7 @@ app.post(
 
           description:
             description ||
-            "",
+            "Task created without a description.",
 
           type,
 
@@ -2044,60 +1925,6 @@ app.post(
 
             opportunityId
           }
-        });
-
-      taskStore.set(
-        task.id,
-        task
-      );
-
-      return res.status(201).json({
-        success: true,
-
-        message:
-          "AI task created successfully.",
-
-        task
-      });
-
-    } catch (error) {
-      console.error(
-        "Create AI task error:",
-        error.message
-      );
-
-      return res.status(500).json({
-        success: false,
-
-        message:
-          "Could not create AI task.",
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-      const task =
-        createTask({
-          title:
-            title ||
-            "Untitled Task",
-
-          description:
-            description ||
-            "",
-
-          requirements,
-
-          context,
-
-          userProfile,
-
-          opportunityId,
-
-          metadata
         });
 
       taskStore.set(
@@ -2222,27 +2049,23 @@ app.post(
         });
       }
 
-      // ---------------------------------
-      // 1. AI PLAN
-      // ---------------------------------
-
       console.log(
         `AI Task Engine: planning task ${id}...`
       );
 
+      const planningContext =
+        task.metadata || {};
+
       const plannedTask =
         await planTask(
-          task
+          task,
+          planningContext
         );
 
       taskStore.set(
         id,
         plannedTask
       );
-
-      // ---------------------------------
-      // 2. EXECUTE
-      // ---------------------------------
 
       console.log(
         `AI Task Engine: executing task ${id}...`
@@ -2282,18 +2105,22 @@ app.post(
         );
 
       if (task) {
-        task.status =
-          "FAILED";
+        const failedTask = {
+          ...task,
 
-        task.error =
-          error.message;
+          status:
+            "FAILED",
 
-        task.updatedAt =
-          new Date().toISOString();
+          error:
+            error.message,
+
+          updatedAt:
+            new Date().toISOString()
+        };
 
         taskStore.set(
-          task.id,
-          task
+          failedTask.id,
+          failedTask
         );
       }
 
@@ -2336,7 +2163,8 @@ app.post(
 
       const approvedTask =
         approveTask(
-          task
+          task,
+          req.body || {}
         );
 
       taskStore.set(
