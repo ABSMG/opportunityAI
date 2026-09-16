@@ -228,13 +228,28 @@ export function createTask(data = {}) {
     startedAt:
       null,
 
-    completedAt:
+    approvedAt:
       null,
 
     submittedAt:
       null,
 
+    completedAt:
+      null,
+
     paidAt:
+      null,
+
+    approvedBy:
+      null,
+
+    submission:
+      null,
+
+    completion:
+      null,
+
+    payment:
       null,
 
     error:
@@ -246,7 +261,7 @@ export function createTask(data = {}) {
 }
 
 // ============================================================
-// AI TASK ANALYSIS
+// FALLBACK TASK PLAN
 // ============================================================
 
 function fallbackTaskPlan(task) {
@@ -326,6 +341,10 @@ function fallbackTaskPlan(task) {
   };
 }
 
+// ============================================================
+// AI TASK ANALYSIS
+// ============================================================
+
 export async function analyzeTask(
   task,
   context = {}
@@ -381,6 +400,8 @@ Rules:
 9. If human approval is required, set requiresHuman=true.
 10. Prefer official APIs and integrations when available.
 11. Keep steps practical and executable.
+12. Use REVIEW for actions that require human approval.
+13. Use QUALITY_CHECK for automated verification.
 `;
 
   try {
@@ -495,8 +516,10 @@ export async function planTask(
 export function calculateAutomation(
   steps = []
 ) {
-  if (!Array.isArray(steps) ||
-      !steps.length) {
+  if (
+    !Array.isArray(steps) ||
+    !steps.length
+  ) {
     return 0;
   }
 
@@ -518,7 +541,7 @@ export function calculateAutomation(
 }
 
 // ============================================================
-// EXECUTE SAFE AI STEPS
+// EXECUTE ANALYZE STEP
 // ============================================================
 
 async function executeAnalyzeStep(
@@ -536,9 +559,16 @@ async function executeAnalyzeStep(
       task.title,
 
     taskDescription:
-      task.description
+      task.description,
+
+    step:
+      step.title
   };
 }
+
+// ============================================================
+// EXECUTE GENERATE STEP
+// ============================================================
 
 async function executeGenerateStep(
   task,
@@ -576,6 +606,7 @@ Rules:
 - Do not claim an external action happened if it did not.
 - Do not submit anything externally.
 - Do not send spam.
+- Do not bypass platform restrictions.
 - Return a concise useful result.
 `;
 
@@ -600,6 +631,10 @@ Rules:
   };
 }
 
+// ============================================================
+// EXECUTE QUALITY CHECK STEP
+// ============================================================
+
 async function executeQualityCheckStep(
   task,
   outputs
@@ -611,8 +646,16 @@ async function executeQualityCheckStep(
       passed:
         false,
 
-      reason:
-        "AI quality checking unavailable.",
+      issues: [
+        "AI quality checking is unavailable because GEMINI_API_KEY is not configured."
+      ],
+
+      suggestions: [
+        "Review the generated output manually."
+      ],
+
+      summary:
+        "Automatic quality checking is unavailable.",
 
       requiresReview:
         true
@@ -640,7 +683,9 @@ Return ONLY valid JSON:
 Rules:
 - Check factual consistency.
 - Check whether requirements were addressed.
+- Check whether outputs follow the supplied task.
 - Do not invent missing information.
+- If important information is missing, identify it as an issue.
 `;
 
   try {
@@ -670,7 +715,33 @@ Rules:
       );
     }
 
-    return JSON.parse(text);
+    const result =
+      JSON.parse(text);
+
+    return {
+      passed:
+        Boolean(result.passed),
+
+      issues:
+        Array.isArray(result.issues)
+          ? result.issues
+          : [],
+
+      suggestions:
+        Array.isArray(
+          result.suggestions
+        )
+          ? result.suggestions
+          : [],
+
+      summary:
+        cleanText(
+          result.summary || ""
+        ),
+
+      requiresReview:
+        !Boolean(result.passed)
+    };
   } catch (error) {
     return {
       passed:
@@ -680,13 +751,22 @@ Rules:
         error.message
       ],
 
-      suggestions: [],
+      suggestions: [
+        "Perform a manual quality review."
+      ],
 
       summary:
-        "Quality check could not be completed automatically."
+        "Quality check could not be completed automatically.",
+
+      requiresReview:
+        true
     };
   }
 }
+
+// ============================================================
+// EXECUTE SAFE AI STEPS
+// ============================================================
 
 export async function executeTask(
   task
@@ -694,6 +774,38 @@ export async function executeTask(
   if (!task) {
     throw new Error(
       "Task is required."
+    );
+  }
+
+  if (
+    task.status !==
+      TASK_STATUS.QUEUED &&
+    task.status !==
+      TASK_STATUS.RUNNING
+  ) {
+    throw new Error(
+      `Task cannot be executed from status ${task.status}.`
+    );
+  }
+
+  const steps =
+    Array.isArray(task.steps)
+      ? task.steps.map(
+          (step, index) => ({
+            ...normalizeStep(
+              step,
+              index
+            ),
+            status:
+              step.status ||
+              TASK_STEP_STATUS.PENDING
+          })
+        )
+      : [];
+
+  if (!steps.length) {
+    throw new Error(
+      "Task has no execution steps. Run planTask before executeTask."
     );
   }
 
@@ -708,20 +820,49 @@ export async function executeTask(
       new Date().toISOString(),
 
     error:
-      null
+      null,
+
+    steps
   };
 
   const outputs = [];
 
+  /*
+   * Execute steps sequentially.
+   *
+   * This is intentional:
+   * later steps may depend on outputs
+   * produced by earlier steps.
+   */
   for (
-    const step of updatedTask.steps || []
+    let index = 0;
+    index < updatedTask.steps.length;
+    index += 1
   ) {
+    const step =
+      updatedTask.steps[index];
+
+    /*
+     * Human-required steps are never
+     * automatically executed.
+     */
     if (
       step.requiresHuman ||
       step.automation === 0
     ) {
       step.status =
         TASK_STEP_STATUS.NEEDS_REVIEW;
+
+      step.output = {
+        type:
+          "human_review",
+
+        message:
+          "This step requires human review or approval.",
+
+        requiresReview:
+          true
+      };
 
       continue;
     }
@@ -761,6 +902,19 @@ export async function executeTask(
             );
           break;
 
+        case "REVIEW":
+          output = {
+            type:
+              "human_review",
+
+            message:
+              "This step requires human review.",
+
+            requiresReview:
+              true
+          };
+          break;
+
         default:
           output = {
             type:
@@ -777,14 +931,29 @@ export async function executeTask(
       step.output =
         output;
 
-      step.status =
+      /*
+       * A step that explicitly requires
+       * review must not be marked completed.
+       */
+      if (
         output?.requiresReview
-          ? TASK_STEP_STATUS.NEEDS_REVIEW
-          : TASK_STEP_STATUS.COMPLETED;
+      ) {
+        step.status =
+          TASK_STEP_STATUS.NEEDS_REVIEW;
+      } else {
+        step.status =
+          TASK_STEP_STATUS.COMPLETED;
+      }
 
       outputs.push({
         stepId:
           step.id,
+
+        order:
+          step.order,
+
+        action:
+          step.action,
 
         output
       });
@@ -813,17 +982,21 @@ export async function executeTask(
     }
   }
 
-  const qualityStep =
-    updatedTask.steps.find(
-      (step) =>
+  /*
+   * Find the quality-check result.
+   */
+  const qualityOutput =
+    outputs.find(
+      (item) =>
         String(
-          step.action || ""
+          item.action || ""
         ).toUpperCase() ===
         "QUALITY_CHECK"
     );
 
   const qualityCheck =
-    qualityStep?.output || null;
+    qualityOutput?.output ||
+    null;
 
   updatedTask.outputs =
     outputs;
@@ -836,6 +1009,13 @@ export async function executeTask(
       updatedTask.steps
     );
 
+  /*
+   * The task is ready for review after
+   * automatic execution.
+   *
+   * This does not mean it was submitted
+   * externally.
+   */
   updatedTask.status =
     TASK_STATUS.READY_FOR_REVIEW;
 
@@ -1027,6 +1207,13 @@ export function getTaskStatus(
           TASK_STEP_STATUS.NEEDS_REVIEW
     ).length;
 
+  const failed =
+    steps.filter(
+      (step) =>
+        step.status ===
+        TASK_STEP_STATUS.FAILED
+    ).length;
+
   return {
     id:
       task.id,
@@ -1046,6 +1233,9 @@ export function getTaskStatus(
     blockedSteps:
       blocked,
 
+    failedSteps:
+      failed,
+
     automationPercentage:
       calculateAutomation(
         steps
@@ -1060,11 +1250,23 @@ export function getTaskStatus(
     startedAt:
       task.startedAt,
 
+    approvedAt:
+      task.approvedAt ||
+      null,
+
+    submittedAt:
+      task.submittedAt ||
+      null,
+
     completedAt:
       task.completedAt,
 
     paidAt:
-      task.paidAt
+      task.paidAt,
+
+    error:
+      task.error ||
+      null
   };
 }
 
