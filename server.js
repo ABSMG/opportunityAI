@@ -36,6 +36,19 @@ import {
   getTaskStatus
 } from "./src/services/aiTaskEngine.js";
 
+// =====================================
+// SUPABASE AI TASK PERSISTENCE
+// =====================================
+
+import {
+  persistTask,
+  getTaskFromSupabase,
+  listTasksFromSupabase,
+  logTaskActivity,
+  saveTaskSubmission,
+  saveTaskPayment
+} from "./src/services/aiTaskPersistence.js";
+
 const app = express();
 
 const PORT =
@@ -82,9 +95,11 @@ const supabase =
 // IN-MEMORY AI TASK STORE
 // =====================================
 //
-// MVP storage for the AI Task Engine.
-// This will later be moved to Supabase
-// after the task database schema is added.
+// Kept for compatibility and temporary
+// runtime access.
+//
+// Supabase is now the persistent source
+// of truth for AI tasks.
 //
 
 const taskStore =
@@ -2002,6 +2017,63 @@ app.get(
 // =====================================
 
 // -------------------------------------
+// GET ALL TASKS FROM SUPABASE
+// -------------------------------------
+
+app.get(
+  "/api/tasks",
+  async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+
+          message:
+            "Supabase is not configured."
+        });
+      }
+
+      const ownerId =
+        req.query.ownerId ||
+        null;
+
+      const tasks =
+        await listTasksFromSupabase(
+          ownerId
+        );
+
+      return res.json({
+        success: true,
+
+        count:
+          tasks.length,
+
+        tasks:
+          tasks.map(
+            serializeTask
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "Get AI tasks error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Could not retrieve AI tasks.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+// -------------------------------------
 // CREATE TASK
 // -------------------------------------
 
@@ -2009,6 +2081,15 @@ app.post(
   "/api/tasks",
   async (req, res) => {
     try {
+      if (!supabase) {
+        return res.status(503).json({
+          success: false,
+
+          message:
+            "Supabase is not configured."
+        });
+      }
+
       const {
         title,
         description,
@@ -2063,9 +2144,36 @@ app.post(
           }
         });
 
+      /*
+       * Supabase is now the persistent
+       * source of truth.
+       */
+      const savedTask =
+        await persistTask(
+          task
+        );
+
+      /*
+       * Keep runtime cache for compatibility.
+       */
       taskStore.set(
         task.id,
+        savedTask ||
         task
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        task,
+        "TASK_CREATED",
+        {
+          source:
+            task.source,
+
+          type:
+            task.type
+        },
+        null
       );
 
       return res.status(201).json({
@@ -2075,7 +2183,10 @@ app.post(
           "AI task created successfully.",
 
         task:
-          serializeTask(task)
+          serializeTask(
+            savedTask ||
+            task
+          )
       });
 
     } catch (error) {
@@ -2109,8 +2220,29 @@ app.get(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      /*
+       * Supabase is the primary source.
+       */
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      /*
+       * Runtime cache remains as fallback.
+       */
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2121,10 +2253,13 @@ app.get(
         });
       }
 
-      // Return the COMPLETE task.
-      // TaskDashboard depends on steps,
-      // plan, outputs, qualityCheck and
-      // lifecycle information.
+      /*
+       * Return the COMPLETE task.
+       *
+       * TaskDashboard depends on steps,
+       * plan, outputs, qualityCheck and
+       * lifecycle information.
+       */
       return res.json({
         success: true,
 
@@ -2163,8 +2298,29 @@ app.post(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      /*
+       * Load from Supabase first.
+       */
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      /*
+       * Fallback to runtime cache.
+       */
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2205,9 +2361,29 @@ app.post(
           planningContext
         );
 
+      /*
+       * Persist planned task.
+       */
+      const savedPlannedTask =
+        await persistTask(
+          plannedTask
+        );
+
       taskStore.set(
         id,
+        savedPlannedTask ||
         plannedTask
+      );
+
+      await logTaskActivity(
+        savedPlannedTask ||
+        plannedTask,
+        "TASK_PLANNED",
+        {
+          context:
+            planningContext
+        },
+        task.status
       );
 
       console.log(
@@ -2216,12 +2392,31 @@ app.post(
 
       const executedTask =
         await executeTask(
+          savedPlannedTask ||
           plannedTask
+        );
+
+      /*
+       * Persist execution result.
+       */
+      const savedExecutedTask =
+        await persistTask(
+          executedTask
         );
 
       taskStore.set(
         id,
+        savedExecutedTask ||
         executedTask
+      );
+
+      await logTaskActivity(
+        savedExecutedTask ||
+        executedTask,
+        "TASK_EXECUTED",
+        {},
+        savedPlannedTask?.status ||
+        plannedTask.status
       );
 
       return res.json({
@@ -2232,6 +2427,7 @@ app.post(
 
         task:
           serializeTask(
+            savedExecutedTask ||
             executedTask
           )
       });
@@ -2242,10 +2438,36 @@ app.post(
         error.message
       );
 
-      const task =
-        taskStore.get(
+      let task =
+        null;
+
+      if (
+        supabase &&
+        isValidUuid(
           req.params.id
-        );
+        )
+      ) {
+        try {
+          task =
+            await getTaskFromSupabase(
+              req.params.id
+            );
+        } catch (
+          loadError
+        ) {
+          console.error(
+            "Failed to reload task after error:",
+            loadError.message
+          );
+        }
+      }
+
+      if (!task) {
+        task =
+          taskStore.get(
+            req.params.id
+          );
+      }
 
       if (task) {
         const failedTask = {
@@ -2265,6 +2487,29 @@ app.post(
           failedTask.id,
           failedTask
         );
+
+        try {
+          await persistTask(
+            failedTask
+          );
+
+          await logTaskActivity(
+            failedTask,
+            "TASK_FAILED",
+            {
+              error:
+                error.message
+            },
+            task.status
+          );
+        } catch (
+          persistenceError
+        ) {
+          console.error(
+            "Failed to persist failed task:",
+            persistenceError.message
+          );
+        }
       }
 
       return res.status(500).json({
@@ -2281,7 +2526,8 @@ app.post(
             ? serializeTask(
                 taskStore.get(
                   req.params.id
-                )
+                ) ||
+                task
               )
             : null
       });
@@ -2301,8 +2547,23 @@ app.post(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2319,9 +2580,23 @@ app.post(
           req.body || {}
         );
 
+      const savedTask =
+        await persistTask(
+          approvedTask
+        );
+
       taskStore.set(
         id,
+        savedTask ||
         approvedTask
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        approvedTask,
+        "TASK_APPROVED",
+        req.body || {},
+        task.status
       );
 
       return res.json({
@@ -2332,6 +2607,7 @@ app.post(
 
         task:
           serializeTask(
+            savedTask ||
             approvedTask
           )
       });
@@ -2364,8 +2640,23 @@ app.post(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2376,15 +2667,45 @@ app.post(
         });
       }
 
+      /*
+       * External submission must remain
+       * human-controlled.
+       */
       const submittedTask =
         markTaskSubmitted(
           task,
           req.body || {}
         );
 
+      const savedTask =
+        await persistTask(
+          submittedTask
+        );
+
       taskStore.set(
         id,
+        savedTask ||
         submittedTask
+      );
+
+      await saveTaskSubmission(
+        savedTask ||
+        submittedTask,
+        {
+          ...(req.body || {}),
+
+          confirmedByUser:
+            req.body?.confirmedByUser ??
+            true
+        }
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        submittedTask,
+        "TASK_SUBMITTED",
+        req.body || {},
+        task.status
       );
 
       return res.json({
@@ -2395,6 +2716,7 @@ app.post(
 
         task:
           serializeTask(
+            savedTask ||
             submittedTask
           )
       });
@@ -2427,8 +2749,23 @@ app.post(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2445,9 +2782,23 @@ app.post(
           req.body || {}
         );
 
+      const savedTask =
+        await persistTask(
+          completedTask
+        );
+
       taskStore.set(
         id,
+        savedTask ||
         completedTask
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        completedTask,
+        "TASK_COMPLETED",
+        req.body || {},
+        task.status
       );
 
       return res.json({
@@ -2458,6 +2809,7 @@ app.post(
 
         task:
           serializeTask(
+            savedTask ||
             completedTask
           )
       });
@@ -2490,8 +2842,23 @@ app.post(
         id
       } = req.params;
 
-      const task =
-        taskStore.get(id);
+      let task =
+        null;
+
+      if (
+        supabase &&
+        isValidUuid(id)
+      ) {
+        task =
+          await getTaskFromSupabase(
+            id
+          );
+      }
+
+      if (!task) {
+        task =
+          taskStore.get(id);
+      }
 
       if (!task) {
         return res.status(404).json({
@@ -2502,15 +2869,61 @@ app.post(
         });
       }
 
+      /*
+       * A task must not be marked PAID
+       * without actual user confirmation.
+       */
+      if (
+        !req.body?.confirmedByUser
+      ) {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            "Payment must be confirmed by the user before the task can be marked as PAID."
+        });
+      }
+
       const paidTask =
         markTaskPaid(
           task,
           req.body || {}
         );
 
+      const savedTask =
+        await persistTask(
+          paidTask
+        );
+
       taskStore.set(
         id,
+        savedTask ||
         paidTask
+      );
+
+      await saveTaskPayment(
+        savedTask ||
+        paidTask,
+        {
+          ...(req.body || {}),
+
+          status:
+            "PAID",
+
+          confirmedByUser:
+            true,
+
+          paidAt:
+            paidTask.paidAt
+        }
+      );
+
+      await logTaskActivity(
+        savedTask ||
+        paidTask,
+        "TASK_PAID",
+        req.body || {},
+        task.status
       );
 
       return res.json({
@@ -2521,6 +2934,7 @@ app.post(
 
         task:
           serializeTask(
+            savedTask ||
             paidTask
           )
       });
