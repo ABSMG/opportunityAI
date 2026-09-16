@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+
+import React, { useEffect, useState } from "react";
 
 const API_BASE = "";
 
@@ -30,7 +31,9 @@ export default function TaskDashboard() {
   const [type, setType] = useState("opportunity");
   const [task, setTask] = useState(null);
 
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [tasksLoading, setTasksLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -57,6 +60,44 @@ export default function TaskDashboard() {
     return data;
   };
 
+  /*
+   * Load tasks directly through the backend.
+   * Backend reads the tasks from Supabase.
+   */
+  const loadTasks = async () => {
+    setTasksLoading(true);
+    setError("");
+
+    try {
+      const data = await request("/api/tasks");
+
+      const loadedTasks = Array.isArray(data.tasks)
+        ? data.tasks
+        : [];
+
+      setTasks(loadedTasks);
+
+      /*
+       * If there is no currently selected task,
+       * show the newest task when available.
+       */
+      if (!task && loadedTasks.length > 0) {
+        setTask(loadedTasks[0]);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setTasksLoading(false);
+    }
+  };
+
+  /*
+   * Load Supabase tasks when Dashboard opens.
+   */
+  useEffect(() => {
+    loadTasks();
+  }, []);
+
   const createTask = async () => {
     if (!title.trim() || !description.trim()) {
       setError("Please enter both a task title and description.");
@@ -66,7 +107,6 @@ export default function TaskDashboard() {
     setLoading(true);
     setError("");
     setMessage("");
-    setTask(null);
 
     try {
       const data = await request("/api/tasks", {
@@ -95,12 +135,28 @@ export default function TaskDashboard() {
       const createdTask = data.task || data;
 
       setTask(createdTask);
+
+      /*
+       * Refresh the list from Supabase after creation.
+       */
+      await loadTasks();
+
       setMessage("Task created successfully.");
+
+      setTitle("");
+      setDescription("");
+      setType("opportunity");
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const selectTask = (selectedTask) => {
+    setTask(selectedTask);
+    setError("");
+    setMessage("");
   };
 
   const refreshTask = async () => {
@@ -111,7 +167,14 @@ export default function TaskDashboard() {
 
     try {
       const data = await request(`/api/tasks/${task.id}`);
-      setTask(data.task || data);
+      const refreshedTask = data.task || data;
+
+      setTask(refreshedTask);
+
+      /*
+       * Keep the Dashboard list synchronized with Supabase.
+       */
+      await loadTasks();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -132,6 +195,9 @@ export default function TaskDashboard() {
       });
 
       setTask(data.task || data);
+
+      await loadTasks();
+
       setMessage(
         "Task executed. Review the result before approving."
       );
@@ -159,6 +225,9 @@ export default function TaskDashboard() {
       });
 
       setTask(data.task || data);
+
+      await loadTasks();
+
       setMessage("Task approved.");
     } catch (err) {
       setError(err.message);
@@ -170,6 +239,14 @@ export default function TaskDashboard() {
   const submitTask = async () => {
     if (!task?.id) return;
 
+    const confirmed = window.confirm(
+      "Have you personally reviewed this task and manually submitted it through the permitted external platform?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     setActionLoading("submit");
     setError("");
     setMessage("");
@@ -180,11 +257,15 @@ export default function TaskDashboard() {
         body: JSON.stringify({
           submittedBy: "user",
           method: "manual",
+          confirmedByUser: true,
           note: "Submitted through the permitted external platform.",
         }),
       });
 
       setTask(data.task || data);
+
+      await loadTasks();
+
       setMessage("Task marked as submitted.");
     } catch (err) {
       setError(err.message);
@@ -210,6 +291,9 @@ export default function TaskDashboard() {
       });
 
       setTask(data.task || data);
+
+      await loadTasks();
+
       setMessage("Task marked as completed.");
     } catch (err) {
       setError(err.message);
@@ -221,6 +305,14 @@ export default function TaskDashboard() {
   const markPaid = async () => {
     if (!task?.id) return;
 
+    const confirmed = window.confirm(
+      "Confirm that you have actually received the payment for this task."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     setActionLoading("paid");
     setError("");
     setMessage("");
@@ -231,10 +323,14 @@ export default function TaskDashboard() {
         body: JSON.stringify({
           recordedBy: "user",
           status: "PAID",
+          confirmedByUser: true,
         }),
       });
 
       setTask(data.task || data);
+
+      await loadTasks();
+
       setMessage("Payment recorded.");
     } catch (err) {
       setError(err.message);
@@ -247,6 +343,7 @@ export default function TaskDashboard() {
     setTask(null);
     setTitle("");
     setDescription("");
+    setType("opportunity");
     setError("");
     setMessage("");
   };
@@ -357,6 +454,63 @@ export default function TaskDashboard() {
               ? "Creating..."
               : "Create AI Task"}
           </button>
+        </div>
+      )}
+
+      {tasksLoading && (
+        <div className="task-loading-card">
+          Loading tasks from Supabase...
+        </div>
+      )}
+
+      {!tasksLoading && tasks.length > 0 && (
+        <div className="task-list-card">
+          <div className="section-label">
+            SAVED TASKS
+          </div>
+
+          <h3>Your OpportunityAI Tasks</h3>
+
+          <div className="task-list">
+            {tasks.map((savedTask) => {
+              const savedStatus =
+                savedTask.status || "QUEUED";
+
+              return (
+                <button
+                  key={savedTask.id}
+                  type="button"
+                  className={`task-list-item ${
+                    task?.id === savedTask.id
+                      ? "selected"
+                      : ""
+                  }`}
+                  onClick={() =>
+                    selectTask(savedTask)
+                  }
+                >
+                  <div>
+                    <strong>
+                      {savedTask.title}
+                    </strong>
+
+                    <small>
+                      {savedTask.description}
+                    </small>
+                  </div>
+
+                  <span
+                    className={`task-status ${
+                      STATUS_CLASS[savedStatus] || ""
+                    }`}
+                  >
+                    {STATUS_LABELS[savedStatus] ||
+                      savedStatus}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -748,7 +902,9 @@ export default function TaskDashboard() {
         .task-progress-card,
         .task-steps-card,
         .quality-card,
-        .task-actions-card {
+        .task-actions-card,
+        .task-list-card,
+        .task-loading-card {
           background: white;
           border: 1px solid #e2e8f0;
           border-radius: 18px;
@@ -793,6 +949,60 @@ export default function TaskDashboard() {
         .task-create-button {
           margin-top: 12px;
           width: fit-content;
+        }
+
+        .task-loading-card {
+          color: #64748b;
+          line-height: 1.6;
+        }
+
+        .task-list-card h3 {
+          margin: 8px 0 15px;
+        }
+
+        .task-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .task-list-item {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 15px;
+          text-align: left;
+          padding: 15px;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          background: #f8fafc;
+          cursor: pointer;
+        }
+
+        .task-list-item:hover,
+        .task-list-item.selected {
+          border-color: #94a3b8;
+        }
+
+        .task-list-item > div {
+          min-width: 0;
+        }
+
+        .task-list-item strong,
+        .task-list-item small {
+          display: block;
+        }
+
+        .task-list-item strong {
+          color: #0f172a;
+        }
+
+        .task-list-item small {
+          margin-top: 4px;
+          color: #64748b;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .task-summary-card {
@@ -1058,6 +1268,11 @@ export default function TaskDashboard() {
 
           .task-create-button {
             width: 100%;
+          }
+
+          .task-list-item {
+            align-items: flex-start;
+            flex-direction: column;
           }
         }
       `}</style>
