@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-
+import TaskDashboard from "./components/TaskDashboard";
 const API_BASE = "";
 
 const tabs = [
   "Overview",
   "Opportunities",
+  "AI Tasks",
   "Outreach",
   "Applications"
 ];
@@ -431,13 +432,13 @@ function App() {
 
       <main className="main">
 
-        {/* ================================= */}
-        {/* OVERVIEW */}
-        {/* ================================= */}
+      {/* ================================= */}
+{/* AI TASK ENGINE */}
+{/* ================================= */}
 
-        {activeTab ===
-          "Overview" && (
-          <>
+{activeTab === "AI Tasks" && (
+  <TaskDashboard />
+)}
 
             <section className="scanner-card">
 
