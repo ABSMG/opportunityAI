@@ -1,6 +1,24 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { createClient } from "@supabase/supabase-js";
 
 const API_BASE = "";
+
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL || "";
+
+const SUPABASE_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  "";
+
+const supabase =
+  SUPABASE_URL && SUPABASE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_KEY)
+    : null;
 
 const STATUS_LABELS = {
   QUEUED: "Queued",
@@ -29,7 +47,11 @@ const isValidHttpUrl = (value) => {
 
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+
+    return (
+      url.protocol === "http:" ||
+      url.protocol === "https:"
+    );
   } catch {
     return false;
   }
@@ -68,126 +90,515 @@ const getExpectedPayment = (task) => {
       task?.paymentAmount ??
       task?.metadata?.paymentAmount ??
       "",
+
     currency:
       payment.currency ??
       task?.paymentCurrency ??
       task?.metadata?.paymentCurrency ??
       "",
+
     provider:
       payment.provider ??
       task?.paymentProvider ??
       task?.metadata?.paymentProvider ??
       "",
+
     method:
       payment.paymentMethod ??
       payment.payment_method ??
       task?.paymentMethod ??
       "",
+
     status: payment.status || "",
-    paidAt: payment.paidAt || payment.paid_at || "",
+
+    paidAt:
+      payment.paidAt ||
+      payment.paid_at ||
+      "",
   };
 };
 
 export default function TaskDashboard() {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [type, setType] = useState("opportunity");
-  const [task, setTask] = useState(null);
+  /*
+   * ================================
+   * AUTHENTICATION
+   * ================================
+   */
 
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [tasksLoading, setTasksLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [authMode, setAuthMode] =
+    useState("login");
+
+  const [authEmail, setAuthEmail] =
+    useState("");
+
+  const [authPassword, setAuthPassword] =
+    useState("");
+
+  const [authName, setAuthName] =
+    useState("");
+
+  const [authLoadingAction, setAuthLoadingAction] =
+    useState(false);
+
+  const [authMessage, setAuthMessage] =
+    useState("");
+
+  const [authError, setAuthError] =
+    useState("");
+
+  /*
+   * Load existing Supabase session.
+   */
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      setAuthError(
+        "Supabase authentication is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to the frontend environment."
+      );
+      return;
+    }
+
+    let mounted = true;
+
+    const loadSession = async () => {
+      try {
+        const {
+          data,
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) {
+          throw error;
+        }
+
+        if (mounted) {
+          setSession(data?.session || null);
+        }
+      } catch (error) {
+        if (mounted) {
+          setAuthError(
+            error?.message ||
+              "Unable to load authentication session."
+          );
+        }
+      } finally {
+        if (mounted) {
+          setAuthLoading(false);
+        }
+      }
+    };
+
+    loadSession();
+
+    const {
+      data: listener,
+    } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        if (!mounted) return;
+
+        setSession(nextSession || null);
+
+        if (nextSession) {
+          setAuthError("");
+          setAuthMessage("");
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      listener?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  /*
+   * Login
+   */
+  const handleLogin = async (event) => {
+    event.preventDefault();
+
+    if (!supabase) {
+      setAuthError(
+        "Supabase authentication is not configured."
+      );
+      return;
+    }
+
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError(
+        "Enter your email and password."
+      );
+      return;
+    }
+
+    setAuthLoadingAction(true);
+    setAuthError("");
+    setAuthMessage("");
+
+    try {
+      const {
+        data,
+        error,
+      } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setSession(data?.session || null);
+
+      setAuthPassword("");
+
+      setAuthMessage(
+        "Login successful."
+      );
+    } catch (error) {
+      setAuthError(
+        error?.message ||
+          "Login failed. Check your email and password."
+      );
+    } finally {
+      setAuthLoadingAction(false);
+    }
+  };
+
+  /*
+   * Register
+   */
+  const handleRegister = async (event) => {
+    event.preventDefault();
+
+    if (!supabase) {
+      setAuthError(
+        "Supabase authentication is not configured."
+      );
+      return;
+    }
+
+    if (!authName.trim()) {
+      setAuthError("Enter your name.");
+      return;
+    }
+
+    if (!authEmail.trim()) {
+      setAuthError("Enter your email.");
+      return;
+    }
+
+    if (authPassword.length < 6) {
+      setAuthError(
+        "Password must be at least 6 characters."
+      );
+      return;
+    }
+
+    setAuthLoadingAction(true);
+    setAuthError("");
+    setAuthMessage("");
+
+    try {
+      const {
+        data,
+        error,
+      } = await supabase.auth.signUp({
+        email: authEmail.trim(),
+        password: authPassword,
+        options: {
+          data: {
+            full_name: authName.trim(),
+          },
+          emailRedirectTo:
+            window.location.origin,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setSession(data?.session || null);
+
+      if (data?.session) {
+        setAuthMessage(
+          "Account created successfully."
+        );
+      } else {
+        setAuthMessage(
+          "Account created. Check your email and confirm your email address before logging in."
+        );
+
+        setAuthMode("login");
+      }
+
+      setAuthPassword("");
+    } catch (error) {
+      setAuthError(
+        error?.message ||
+          "Registration failed."
+      );
+    } finally {
+      setAuthLoadingAction(false);
+    }
+  };
+
+  /*
+   * Logout
+   */
+  const handleLogout = async () => {
+    if (!supabase) return;
+
+    setAuthLoadingAction(true);
+    setAuthError("");
+    setAuthMessage("");
+
+    try {
+      const {
+        error,
+      } = await supabase.auth.signOut();
+
+      if (error) {
+        throw error;
+      }
+
+      setSession(null);
+      setTasks([]);
+      setTask(null);
+    } catch (error) {
+      setAuthError(
+        error?.message ||
+          "Unable to log out."
+      );
+    } finally {
+      setAuthLoadingAction(false);
+    }
+  };
+
+  /*
+   * ================================
+   * TASK STATE
+   * ================================
+   */
+
+  const [title, setTitle] = useState("");
+  const [description, setDescription] =
+    useState("");
+
+  const [type, setType] =
+    useState("opportunity");
+
+  const [task, setTask] =
+    useState(null);
+
+  const [tasks, setTasks] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [tasksLoading, setTasksLoading] =
+    useState(true);
+
+  const [actionLoading, setActionLoading] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
 
   /*
    * Submission details.
-   * These are entered by the user because OpportunityAI
-   * does not submit externally on the user's behalf.
    */
-  const [submissionReference, setSubmissionReference] =
-    useState("");
-  const [submissionNotes, setSubmissionNotes] =
-    useState("");
+  const [
+    submissionReference,
+    setSubmissionReference,
+  ] = useState("");
+
+  const [
+    submissionNotes,
+    setSubmissionNotes,
+  ] = useState("");
 
   /*
    * Payment details.
-   * Payment is recorded only after the user confirms
-   * that the money was actually received.
    */
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentCurrency, setPaymentCurrency] =
-    useState("");
-  const [paymentProvider, setPaymentProvider] =
-    useState("");
-  const [paymentMethod, setPaymentMethod] =
-    useState("");
-  const [paymentReference, setPaymentReference] =
-    useState("");
-  const [paymentEvidence, setPaymentEvidence] =
-    useState("");
+  const [
+    paymentAmount,
+    setPaymentAmount,
+  ] = useState("");
 
-  const request = async (url, options = {}) => {
-    const response = await fetch(`${API_BASE}${url}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
-      ...options,
-    });
+  const [
+    paymentCurrency,
+    setPaymentCurrency,
+  ] = useState("");
 
-    const data = await response.json().catch(() => ({}));
+  const [
+    paymentProvider,
+    setPaymentProvider,
+  ] = useState("");
+
+  const [
+    paymentMethod,
+    setPaymentMethod,
+  ] = useState("");
+
+  const [
+    paymentReference,
+    setPaymentReference,
+  ] = useState("");
+
+  const [
+    paymentEvidence,
+    setPaymentEvidence,
+  ] = useState("");
+
+  /*
+   * ================================
+   * AUTHENTICATED API REQUEST
+   * ================================
+   *
+   * This is the important fix.
+   *
+   * Every protected backend request receives:
+   *
+   * Authorization: Bearer <Supabase access token>
+   *
+   * The backend can therefore identify the
+   * authenticated user and enforce ownership.
+   */
+
+  const request = async (
+    url,
+    options = {}
+  ) => {
+    if (!supabase) {
+      throw new Error(
+        "Supabase authentication is not configured."
+      );
+    }
+
+    const {
+      data,
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    const accessToken =
+      data?.session?.access_token;
+
+    if (!accessToken) {
+      setSession(null);
+
+      throw new Error(
+        "Authentication required. Please log in."
+      );
+    }
+
+    const {
+      headers: optionHeaders = {},
+      ...requestOptions
+    } = options;
+
+    const response = await fetch(
+      `${API_BASE}${url}`,
+      {
+        ...requestOptions,
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${accessToken}`,
+
+          ...optionHeaders,
+        },
+      }
+    );
+
+    const responseData =
+      await response
+        .json()
+        .catch(() => ({}));
 
     if (!response.ok) {
       throw new Error(
-        data.error ||
-          data.message ||
+        responseData.error ||
+          responseData.message ||
           `Request failed (${response.status})`
       );
     }
 
-    return data;
+    return responseData;
   };
 
   /*
-   * Load tasks directly through the backend.
-   * Backend reads the tasks from Supabase.
+   * Load tasks directly through backend.
    */
-  const loadTasks = async (selectedTaskId = null) => {
+  const loadTasks = async (
+    selectedTaskId = null
+  ) => {
+    if (!session) {
+      setTasks([]);
+      setTask(null);
+      setTasksLoading(false);
+      return;
+    }
+
     setTasksLoading(true);
     setError("");
 
     try {
-      const data = await request("/api/tasks");
+      const data =
+        await request("/api/tasks");
 
-      const loadedTasks = Array.isArray(data.tasks)
-        ? data.tasks
-        : [];
+      const loadedTasks =
+        Array.isArray(data.tasks)
+          ? data.tasks
+          : [];
 
       setTasks(loadedTasks);
 
       if (loadedTasks.length > 0) {
         setTask((currentTask) => {
           const preferredId =
-            selectedTaskId || currentTask?.id || null;
+            selectedTaskId ||
+            currentTask?.id ||
+            null;
 
           if (preferredId) {
-            const matchingTask = loadedTasks.find(
-              (savedTask) =>
-                savedTask.id === preferredId
-            );
+            const matchingTask =
+              loadedTasks.find(
+                (savedTask) =>
+                  savedTask.id ===
+                  preferredId
+              );
 
             if (matchingTask) {
               return matchingTask;
             }
           }
 
-          return currentTask || loadedTasks[0];
+          return (
+            currentTask ||
+            loadedTasks[0]
+          );
         });
       } else {
         setTask((currentTask) =>
-          currentTask?.id ? currentTask : null
+          currentTask?.id
+            ? currentTask
+            : null
         );
       }
     } catch (err) {
@@ -197,53 +608,92 @@ export default function TaskDashboard() {
     }
   };
 
+  /*
+   * Reload tasks after authentication.
+   */
   useEffect(() => {
-    loadTasks();
-  }, []);
+    if (!authLoading && session) {
+      loadTasks();
+    }
+
+    if (!authLoading && !session) {
+      setTasks([]);
+      setTask(null);
+      setTasksLoading(false);
+    }
+  }, [session, authLoading]);
 
   /*
-   * Keep payment fields synchronized with a task
-   * when the user selects another task.
+   * Keep payment fields synchronized.
    */
-  const syncPaymentFields = (selectedTask) => {
-    const payment = getExpectedPayment(selectedTask);
+  const syncPaymentFields =
+    (selectedTask) => {
+      const payment =
+        getExpectedPayment(
+          selectedTask
+        );
 
-    setPaymentAmount(
-      payment.amount !== undefined &&
-        payment.amount !== null
-        ? String(payment.amount)
-        : ""
-    );
+      setPaymentAmount(
+        payment.amount !== undefined &&
+          payment.amount !== null
+          ? String(payment.amount)
+          : ""
+      );
 
-    setPaymentCurrency(payment.currency || "");
-    setPaymentProvider(payment.provider || "");
-    setPaymentMethod(payment.method || "");
+      setPaymentCurrency(
+        payment.currency || ""
+      );
 
-    setPaymentReference(
-      selectedTask?.payment?.providerReference ||
-        selectedTask?.payment?.provider_reference ||
-        ""
-    );
+      setPaymentProvider(
+        payment.provider || ""
+      );
 
-    setPaymentEvidence(
-      selectedTask?.payment?.evidence?.url ||
-        selectedTask?.payment?.evidence ||
-        ""
-    );
-  };
+      setPaymentMethod(
+        payment.method || ""
+      );
 
-  const syncSubmissionFields = (selectedTask) => {
-    setSubmissionReference(
-      selectedTask?.submission?.reference || ""
-    );
+      setPaymentReference(
+        selectedTask?.payment
+          ?.providerReference ||
+          selectedTask?.payment
+            ?.provider_reference ||
+          ""
+      );
 
-    setSubmissionNotes(
-      selectedTask?.submission?.notes || ""
-    );
-  };
+      setPaymentEvidence(
+        selectedTask?.payment
+          ?.evidence?.url ||
+          selectedTask?.payment
+            ?.evidence ||
+          ""
+      );
+    };
 
+  const syncSubmissionFields =
+    (selectedTask) => {
+      setSubmissionReference(
+        selectedTask?.submission
+          ?.reference || ""
+      );
+
+      setSubmissionNotes(
+        selectedTask?.submission
+          ?.notes || ""
+      );
+    };
+
+  /*
+   * Create task.
+   *
+   * ownerId is intentionally NOT sent from
+   * the browser. The backend should derive the
+   * owner from the authenticated access token.
+   */
   const createTask = async () => {
-    if (!title.trim() || !description.trim()) {
+    if (
+      !title.trim() ||
+      !description.trim()
+    ) {
       setError(
         "Please enter both a task title and description."
       );
@@ -255,38 +705,52 @@ export default function TaskDashboard() {
     setMessage("");
 
     try {
-      const data = await request("/api/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim(),
-          type,
-          source: "OpportunityAI",
-          ownerId: null,
-          context: {},
-          userProfile: {
-            skills: [
-              "English",
-              "Swahili",
-              "Communication",
-              "Translation",
-              "AI",
-              "Computer",
-              "Internet",
-            ],
-          },
-        }),
-      });
+      const data =
+        await request("/api/tasks", {
+          method: "POST",
 
-      const createdTask = data.task || data;
+          body: JSON.stringify({
+            title: title.trim(),
+            description:
+              description.trim(),
+            type,
+            source: "OpportunityAI",
+            context: {},
+
+            userProfile: {
+              skills: [
+                "English",
+                "Swahili",
+                "Communication",
+                "Translation",
+                "AI",
+                "Computer",
+                "Internet",
+              ],
+            },
+          }),
+        });
+
+      const createdTask =
+        data.task || data;
 
       setTask(createdTask);
-      syncPaymentFields(createdTask);
-      syncSubmissionFields(createdTask);
 
-      await loadTasks(createdTask?.id || null);
+      syncPaymentFields(
+        createdTask
+      );
 
-      setMessage("Task created successfully.");
+      syncSubmissionFields(
+        createdTask
+      );
+
+      await loadTasks(
+        createdTask?.id || null
+      );
+
+      setMessage(
+        "Task created successfully."
+      );
 
       setTitle("");
       setDescription("");
@@ -298,33 +762,52 @@ export default function TaskDashboard() {
     }
   };
 
-  const selectTask = async (selectedTask) => {
+  const selectTask = async (
+    selectedTask
+  ) => {
     if (!selectedTask?.id) return;
 
     setTask(selectedTask);
-    syncPaymentFields(selectedTask);
-    syncSubmissionFields(selectedTask);
+
+    syncPaymentFields(
+      selectedTask
+    );
+
+    syncSubmissionFields(
+      selectedTask
+    );
 
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTask.id}`
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTask.id}`
+        );
 
-      const refreshedTask = data.task || data;
+      const refreshedTask =
+        data.task || data;
 
       setTask(refreshedTask);
-      syncPaymentFields(refreshedTask);
-      syncSubmissionFields(refreshedTask);
 
-      setTasks((currentTasks) =>
-        currentTasks.map((savedTask) =>
-          savedTask.id === refreshedTask.id
-            ? refreshedTask
-            : savedTask
-        )
+      syncPaymentFields(
+        refreshedTask
+      );
+
+      syncSubmissionFields(
+        refreshedTask
+      );
+
+      setTasks(
+        (currentTasks) =>
+          currentTasks.map(
+            (savedTask) =>
+              savedTask.id ===
+              refreshedTask.id
+                ? refreshedTask
+                : savedTask
+          )
       );
     } catch (err) {
       setTask(selectedTask);
@@ -335,24 +818,40 @@ export default function TaskDashboard() {
   const refreshTask = async () => {
     if (!task?.id) return;
 
-    const selectedTaskId = task.id;
+    const selectedTaskId =
+      task.id;
 
-    setActionLoading("refresh");
+    setActionLoading(
+      "refresh"
+    );
+
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}`
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}`
+        );
+
+      const refreshedTask =
+        data.task || data;
+
+      setTask(
+        refreshedTask
       );
 
-      const refreshedTask = data.task || data;
+      syncPaymentFields(
+        refreshedTask
+      );
 
-      setTask(refreshedTask);
-      syncPaymentFields(refreshedTask);
-      syncSubmissionFields(refreshedTask);
+      syncSubmissionFields(
+        refreshedTask
+      );
 
-      await loadTasks(selectedTaskId);
+      await loadTasks(
+        selectedTaskId
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -363,23 +862,25 @@ export default function TaskDashboard() {
   const runTask = async () => {
     if (!task?.id) return;
 
-    const selectedTaskId = task.id;
-    const officialUrl = getOfficialUrl(task);
+    const selectedTaskId =
+      task.id;
 
-    /*
-     * A real opportunity should have an official source.
-     * This does not block manually-created generic tasks
-     * that do not claim to be external opportunities.
-     */
+    const officialUrl =
+      getOfficialUrl(task);
+
     if (
-      (task.type === "opportunity" ||
-        task.type === "remote_job" ||
-        task.type === "freelance") &&
+      (task.type ===
+        "opportunity" ||
+        task.type ===
+          "remote_job" ||
+        task.type ===
+          "freelance") &&
       !officialUrl
     ) {
       setError(
         "This opportunity does not have a valid official website/link yet. Open or add the official source before running it."
       );
+
       return;
     }
 
@@ -388,23 +889,35 @@ export default function TaskDashboard() {
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}/run`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            officialUrl: officialUrl || null,
-          }),
-        }
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}/run`,
+          {
+            method: "POST",
 
-      const updatedTask = data.task || data;
+            body: JSON.stringify({
+              officialUrl:
+                officialUrl || null,
+            }),
+          }
+        );
+
+      const updatedTask =
+        data.task || data;
 
       setTask(updatedTask);
-      syncPaymentFields(updatedTask);
-      syncSubmissionFields(updatedTask);
 
-      await loadTasks(selectedTaskId);
+      syncPaymentFields(
+        updatedTask
+      );
+
+      syncSubmissionFields(
+        updatedTask
+      );
+
+      await loadTasks(
+        selectedTaskId
+      );
 
       setMessage(
         "Task executed. Review the result before approving."
@@ -419,33 +932,50 @@ export default function TaskDashboard() {
   const approveTask = async () => {
     if (!task?.id) return;
 
-    const selectedTaskId = task.id;
+    const selectedTaskId =
+      task.id;
 
-    setActionLoading("approve");
+    setActionLoading(
+      "approve"
+    );
+
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}/approve`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            approvedBy: "user",
-            note: "Approved by task owner.",
-          }),
-        }
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}/approve`,
+          {
+            method: "POST",
 
-      const updatedTask = data.task || data;
+            body: JSON.stringify({
+              approvedBy: "user",
+              note: "Approved by task owner.",
+            }),
+          }
+        );
+
+      const updatedTask =
+        data.task || data;
 
       setTask(updatedTask);
-      syncPaymentFields(updatedTask);
-      syncSubmissionFields(updatedTask);
 
-      await loadTasks(selectedTaskId);
+      syncPaymentFields(
+        updatedTask
+      );
 
-      setMessage("Task approved.");
+      syncSubmissionFields(
+        updatedTask
+      );
+
+      await loadTasks(
+        selectedTaskId
+      );
+
+      setMessage(
+        "Task approved."
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -455,62 +985,84 @@ export default function TaskDashboard() {
 
   /*
    * REAL MANUAL SUBMISSION FLOW
-   *
-   * OpportunityAI does NOT submit the task externally.
-   * The user opens the official website and submits it
-   * themselves, then confirms what happened.
    */
   const submitTask = async () => {
     if (!task?.id) return;
 
-    const officialUrl = getOfficialUrl(task);
+    const officialUrl =
+      getOfficialUrl(task);
 
     if (!officialUrl) {
       setError(
         "No valid official submission link is available for this task."
       );
+
       return;
     }
 
-    const confirmed = window.confirm(
-      "Open the official website, review the prepared material, and submit the task yourself. Have you personally completed the external submission?"
+    const confirmed =
+      window.confirm(
+        "Open the official website, review the prepared material, and submit the task yourself. Have you personally completed the external submission?"
+      );
+
+    if (!confirmed) return;
+
+    const selectedTaskId =
+      task.id;
+
+    setActionLoading(
+      "submit"
     );
 
-    if (!confirmed) {
-      return;
-    }
-
-    const selectedTaskId = task.id;
-
-    setActionLoading("submit");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}/submit`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            submittedBy: "user",
-            method: "manual",
-            officialUrl,
-            reference:
-              submissionReference.trim() || null,
-            notes:
-              submissionNotes.trim() || null,
-            confirmedByUser: true,
-          }),
-        }
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}/submit`,
+          {
+            method: "POST",
 
-      const updatedTask = data.task || data;
+            body: JSON.stringify({
+              submittedBy:
+                "user",
+
+              method:
+                "manual",
+
+              officialUrl,
+
+              reference:
+                submissionReference.trim() ||
+                null,
+
+              notes:
+                submissionNotes.trim() ||
+                null,
+
+              confirmedByUser:
+                true,
+            }),
+          }
+        );
+
+      const updatedTask =
+        data.task || data;
 
       setTask(updatedTask);
-      syncPaymentFields(updatedTask);
-      syncSubmissionFields(updatedTask);
 
-      await loadTasks(selectedTaskId);
+      syncPaymentFields(
+        updatedTask
+      );
+
+      syncSubmissionFields(
+        updatedTask
+      );
+
+      await loadTasks(
+        selectedTaskId
+      );
 
       setMessage(
         "Submission confirmed and saved to your task history."
@@ -524,46 +1076,63 @@ export default function TaskDashboard() {
 
   /*
    * Completion remains user-confirmed.
-   * AI does not falsely claim that an external platform
-   * accepted or completed the work.
    */
   const completeTask = async () => {
     if (!task?.id) return;
 
-    const confirmed = window.confirm(
-      "Confirm that the external task/work has actually been completed or accepted."
+    const confirmed =
+      window.confirm(
+        "Confirm that the external task/work has actually been completed or accepted."
+      );
+
+    if (!confirmed) return;
+
+    const selectedTaskId =
+      task.id;
+
+    setActionLoading(
+      "complete"
     );
 
-    if (!confirmed) {
-      return;
-    }
-
-    const selectedTaskId = task.id;
-
-    setActionLoading("complete");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}/complete`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            completedBy: "user",
-            confirmedByUser: true,
-            result: "Task completion confirmed by the task owner.",
-          }),
-        }
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}/complete`,
+          {
+            method: "POST",
 
-      const updatedTask = data.task || data;
+            body: JSON.stringify({
+              completedBy:
+                "user",
+
+              confirmedByUser:
+                true,
+
+              result:
+                "Task completion confirmed by the task owner.",
+            }),
+          }
+        );
+
+      const updatedTask =
+        data.task || data;
 
       setTask(updatedTask);
-      syncPaymentFields(updatedTask);
-      syncSubmissionFields(updatedTask);
 
-      await loadTasks(selectedTaskId);
+      syncPaymentFields(
+        updatedTask
+      );
+
+      syncSubmissionFields(
+        updatedTask
+      );
+
+      await loadTasks(
+        selectedTaskId
+      );
 
       setMessage(
         "Task completion confirmed and saved."
@@ -577,32 +1146,42 @@ export default function TaskDashboard() {
 
   /*
    * REAL PAYMENT RECORDING
-   *
-   * Payment is never inferred from task completion.
-   * User must provide actual payment information.
    */
   const markPaid = async () => {
     if (!task?.id) return;
 
-    if (!paymentAmount || Number(paymentAmount) <= 0) {
+    if (
+      !paymentAmount ||
+      Number(paymentAmount) <= 0
+    ) {
       setError(
         "Enter the actual amount you received."
       );
+
       return;
     }
 
     if (!paymentCurrency.trim()) {
-      setError("Enter the payment currency.");
+      setError(
+        "Enter the payment currency."
+      );
+
       return;
     }
 
     if (!paymentProvider.trim()) {
-      setError("Enter the payment provider.");
+      setError(
+        "Enter the payment provider."
+      );
+
       return;
     }
 
     if (!paymentMethod.trim()) {
-      setError("Enter the payment method.");
+      setError(
+        "Enter the payment method."
+      );
+
       return;
     }
 
@@ -610,56 +1189,90 @@ export default function TaskDashboard() {
       setError(
         "Add payment evidence or a reference before recording payment."
       );
+
       return;
     }
 
-    const confirmed = window.confirm(
-      "Confirm that this payment was actually received and that the information you entered is accurate."
-    );
+    const confirmed =
+      window.confirm(
+        "Confirm that this payment was actually received and that the information you entered is accurate."
+      );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
-    const selectedTaskId = task.id;
+    const selectedTaskId =
+      task.id;
 
     setActionLoading("paid");
     setError("");
     setMessage("");
 
     try {
-      const data = await request(
-        `/api/tasks/${selectedTaskId}/paid`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            recordedBy: "user",
-            status: "PAID",
-            confirmedByUser: true,
-            amount: Number(paymentAmount),
-            currency: paymentCurrency.trim(),
-            provider: paymentProvider.trim(),
-            paymentMethod: paymentMethod.trim(),
-            providerReference:
-              paymentReference.trim() || null,
-            evidence: {
-              reference:
-                paymentReference.trim() || null,
-              details: paymentEvidence.trim(),
-            },
-            notes:
-              "Payment confirmed by the task owner.",
-          }),
-        }
-      );
+      const data =
+        await request(
+          `/api/tasks/${selectedTaskId}/paid`,
+          {
+            method: "POST",
 
-      const updatedTask = data.task || data;
+            body: JSON.stringify({
+              recordedBy:
+                "user",
+
+              status:
+                "PAID",
+
+              confirmedByUser:
+                true,
+
+              amount:
+                Number(
+                  paymentAmount
+                ),
+
+              currency:
+                paymentCurrency.trim(),
+
+              provider:
+                paymentProvider.trim(),
+
+              paymentMethod:
+                paymentMethod.trim(),
+
+              providerReference:
+                paymentReference.trim() ||
+                null,
+
+              evidence: {
+                reference:
+                  paymentReference.trim() ||
+                  null,
+
+                details:
+                  paymentEvidence.trim(),
+              },
+
+              notes:
+                "Payment confirmed by the task owner.",
+            }),
+          }
+        );
+
+      const updatedTask =
+        data.task || data;
 
       setTask(updatedTask);
-      syncPaymentFields(updatedTask);
-      syncSubmissionFields(updatedTask);
 
-      await loadTasks(selectedTaskId);
+      syncPaymentFields(
+        updatedTask
+      );
+
+      syncSubmissionFields(
+        updatedTask
+      );
+
+      await loadTasks(
+        selectedTaskId
+      );
 
       setMessage(
         "Actual payment has been recorded in the task history."
@@ -695,23 +1308,329 @@ export default function TaskDashboard() {
     task?.automationPercentage ?? 0
   );
 
-  const status = task?.status || "QUEUED";
+  const status =
+    task?.status || "QUEUED";
 
-  const officialUrl = useMemo(
-    () => getOfficialUrl(task),
-    [task]
-  );
+  const officialUrl =
+    useMemo(
+      () => getOfficialUrl(task),
+      [task]
+    );
 
-  const expectedPayment = useMemo(
-    () => getExpectedPayment(task),
-    [task]
-  );
+  const expectedPayment =
+    useMemo(
+      () => getExpectedPayment(task),
+      [task]
+    );
 
-  const completedSteps = Array.isArray(task?.steps)
-    ? task.steps.filter(
-        (step) => step.status === "COMPLETED"
-      ).length
-    : 0;
+  const completedSteps =
+    Array.isArray(task?.steps)
+      ? task.steps.filter(
+          (step) =>
+            step.status ===
+            "COMPLETED"
+        ).length
+      : 0;
+
+  /*
+   * ================================
+   * AUTH LOADING
+   * ================================
+   */
+
+  if (authLoading) {
+    return (
+      <section className="task-dashboard">
+        <div className="auth-card">
+          <div className="section-label">
+            OPPORTUNITYAI
+          </div>
+
+          <h2>
+            Checking your account...
+          </h2>
+
+          <p>
+            Loading your secure session.
+          </p>
+        </div>
+
+        <style>{`
+          .auth-card {
+            max-width: 520px;
+            margin: 40px auto;
+            padding: 30px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+          }
+
+          .auth-card h2 {
+            margin: 8px 0;
+          }
+
+          .auth-card p {
+            color: #64748b;
+            line-height: 1.6;
+          }
+        `}</style>
+      </section>
+    );
+  }
+
+  /*
+   * ================================
+   * LOGIN / REGISTER
+   * ================================
+   */
+
+  if (!session) {
+    return (
+      <section className="task-dashboard">
+        <div className="auth-card">
+          <div className="section-label">
+            OPPORTUNITYAI ACCOUNT
+          </div>
+
+          <h2>
+            {authMode === "login"
+              ? "Welcome back"
+              : "Create your account"}
+          </h2>
+
+          <p className="auth-description">
+            {authMode === "login"
+              ? "Log in to access your saved AI tasks and opportunities."
+              : "Create your OpportunityAI account to save tasks securely to your profile."}
+          </p>
+
+          {authError && (
+            <div className="auth-error">
+              {authError}
+            </div>
+          )}
+
+          {authMessage && (
+            <div className="auth-success">
+              {authMessage}
+            </div>
+          )}
+
+          <form
+            className="auth-form"
+            onSubmit={
+              authMode === "login"
+                ? handleLogin
+                : handleRegister
+            }
+          >
+            {authMode === "register" && (
+              <>
+                <label>
+                  Full name
+                </label>
+
+                <input
+                  type="text"
+                  value={authName}
+                  onChange={(event) =>
+                    setAuthName(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Your full name"
+                  autoComplete="name"
+                />
+              </>
+            )}
+
+            <label>
+              Email
+            </label>
+
+            <input
+              type="email"
+              value={authEmail}
+              onChange={(event) =>
+                setAuthEmail(
+                  event.target.value
+                )
+              }
+              placeholder="you@example.com"
+              autoComplete="email"
+            />
+
+            <label>
+              Password
+            </label>
+
+            <input
+              type="password"
+              value={authPassword}
+              onChange={(event) =>
+                setAuthPassword(
+                  event.target.value
+                )
+              }
+              placeholder="At least 6 characters"
+              autoComplete={
+                authMode === "login"
+                  ? "current-password"
+                  : "new-password"
+              }
+            />
+
+            <button
+              className="primary-button auth-submit"
+              type="submit"
+              disabled={
+                authLoadingAction
+              }
+            >
+              {authLoadingAction
+                ? authMode === "login"
+                  ? "Logging in..."
+                  : "Creating account..."
+                : authMode === "login"
+                ? "Login"
+                : "Create Account"}
+            </button>
+          </form>
+
+          <div className="auth-switch">
+            {authMode === "login"
+              ? "Don't have an account?"
+              : "Already have an account?"}
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode(
+                  authMode === "login"
+                    ? "register"
+                    : "login"
+                );
+
+                setAuthError("");
+                setAuthMessage("");
+              }}
+            >
+              {authMode === "login"
+                ? "Register"
+                : "Login"}
+            </button>
+          </div>
+        </div>
+
+        <style>{`
+          .auth-card {
+            max-width: 520px;
+            margin: 40px auto;
+            padding: 30px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, .05);
+          }
+
+          .auth-card h2 {
+            margin: 8px 0;
+            font-size: 28px;
+            color: #0f172a;
+          }
+
+          .auth-description {
+            color: #64748b;
+            line-height: 1.6;
+            margin-bottom: 22px;
+          }
+
+          .auth-form {
+            display: grid;
+            gap: 10px;
+          }
+
+          .auth-form label {
+            margin-top: 5px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #334155;
+          }
+
+          .auth-form input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 13px;
+            font: inherit;
+            outline: none;
+          }
+
+          .auth-form input:focus {
+            border-color: #64748b;
+          }
+
+          .auth-submit {
+            width: 100%;
+            margin-top: 10px;
+          }
+
+          .auth-error,
+          .auth-success {
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            line-height: 1.5;
+            font-size: 13px;
+          }
+
+          .auth-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+          }
+
+          .auth-success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+          }
+
+          .auth-switch {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 5px;
+            margin-top: 20px;
+            color: #64748b;
+            font-size: 13px;
+          }
+
+          .auth-switch button {
+            border: 0;
+            background: transparent;
+            color: #0f172a;
+            font-weight: 800;
+            cursor: pointer;
+          }
+
+          @media (max-width: 600px) {
+            .auth-card {
+              margin: 20px 0;
+              padding: 22px;
+            }
+          }
+        `}</style>
+      </section>
+    );
+  }
+
+  /*
+   * ================================
+   * AUTHENTICATED DASHBOARD
+   * ================================
+   */
 
   return (
     <section className="task-dashboard">
@@ -721,24 +1640,51 @@ export default function TaskDashboard() {
             AI TASK ENGINE
           </div>
 
-          <h2>Automate Your Opportunity</h2>
+          <h2>
+            Automate Your Opportunity
+          </h2>
 
           <p>
-            Create a task, let AI analyze and execute the
-            automatable parts, then review and approve
-            anything that requires your action.
+            Create a task, let AI analyze and
+            execute the automatable parts, then
+            review and approve anything that
+            requires your action.
           </p>
+
+          <div className="signed-in-user">
+            Signed in as{" "}
+            <strong>
+              {session?.user?.email}
+            </strong>
+          </div>
         </div>
 
-        {task && (
+        <div className="dashboard-account-actions">
+          {task && (
+            <button
+              className="secondary-button"
+              onClick={resetTask}
+              disabled={
+                loading ||
+                !!actionLoading
+              }
+            >
+              New Task
+            </button>
+          )}
+
           <button
-            className="secondary-button"
-            onClick={resetTask}
-            disabled={loading || !!actionLoading}
+            className="logout-button"
+            onClick={handleLogout}
+            disabled={
+              authLoadingAction
+            }
           >
-            New Task
+            {authLoadingAction
+              ? "Logging out..."
+              : "Logout"}
           </button>
-        )}
+        </div>
       </div>
 
       {!task && (
@@ -747,34 +1693,46 @@ export default function TaskDashboard() {
             CREATE TASK
           </div>
 
-          <label>Task title</label>
+          <label>
+            Task title
+          </label>
 
           <input
             type="text"
             value={title}
             onChange={(event) =>
-              setTitle(event.target.value)
+              setTitle(
+                event.target.value
+              )
             }
             placeholder="Example: Prepare a freelance proposal"
           />
 
-          <label>Task description</label>
+          <label>
+            Task description
+          </label>
 
           <textarea
             value={description}
             onChange={(event) =>
-              setDescription(event.target.value)
+              setDescription(
+                event.target.value
+              )
             }
             placeholder="Describe exactly what you want OpportunityAI to do..."
             rows={6}
           />
 
-          <label>Task type</label>
+          <label>
+            Task type
+          </label>
 
           <select
             value={type}
             onChange={(event) =>
-              setType(event.target.value)
+              setType(
+                event.target.value
+              )
             }
           >
             <option value="opportunity">
@@ -816,56 +1774,75 @@ export default function TaskDashboard() {
         </div>
       )}
 
-      {!tasksLoading && tasks.length > 0 && (
-        <div className="task-list-card">
-          <div className="section-label">
-            SAVED TASKS
+      {!tasksLoading &&
+        tasks.length > 0 && (
+          <div className="task-list-card">
+            <div className="section-label">
+              SAVED TASKS
+            </div>
+
+            <h3>
+              Your OpportunityAI Tasks
+            </h3>
+
+            <div className="task-list">
+              {tasks.map(
+                (savedTask) => {
+                  const savedStatus =
+                    savedTask.status ||
+                    "QUEUED";
+
+                  return (
+                    <button
+                      key={
+                        savedTask.id
+                      }
+                      type="button"
+                      className={`task-list-item ${
+                        task?.id ===
+                        savedTask.id
+                          ? "selected"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        selectTask(
+                          savedTask
+                        )
+                      }
+                    >
+                      <div>
+                        <strong>
+                          {
+                            savedTask.title
+                          }
+                        </strong>
+
+                        <small>
+                          {
+                            savedTask.description
+                          }
+                        </small>
+                      </div>
+
+                      <span
+                        className={`task-status ${
+                          STATUS_CLASS[
+                            savedStatus
+                          ] || ""
+                        }`}
+                      >
+                        {STATUS_LABELS[
+                          savedStatus
+                        ] ||
+                          savedStatus}
+                      </span>
+                    </button>
+                  );
+                }
+              )}
+            </div>
           </div>
-
-          <h3>Your OpportunityAI Tasks</h3>
-
-          <div className="task-list">
-            {tasks.map((savedTask) => {
-              const savedStatus =
-                savedTask.status || "QUEUED";
-
-              return (
-                <button
-                  key={savedTask.id}
-                  type="button"
-                  className={`task-list-item ${
-                    task?.id === savedTask.id
-                      ? "selected"
-                      : ""
-                  }`}
-                  onClick={() =>
-                    selectTask(savedTask)
-                  }
-                >
-                  <div>
-                    <strong>
-                      {savedTask.title}
-                    </strong>
-
-                    <small>
-                      {savedTask.description}
-                    </small>
-                  </div>
-
-                  <span
-                    className={`task-status ${
-                      STATUS_CLASS[savedStatus] || ""
-                    }`}
-                  >
-                    {STATUS_LABELS[savedStatus] ||
-                      savedStatus}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+        )}
 
       {message && (
         <div className="success-message">
@@ -875,8 +1852,13 @@ export default function TaskDashboard() {
 
       {error && (
         <div className="error-message">
-          <strong>Task error</strong>
-          <div>{error}</div>
+          <strong>
+            Task error
+          </strong>
+
+          <div>
+            {error}
+          </div>
         </div>
       )}
 
@@ -888,9 +1870,13 @@ export default function TaskDashboard() {
                 TASK
               </div>
 
-              <h3>{task.title}</h3>
+              <h3>
+                {task.title}
+              </h3>
 
-              <p>{task.description}</p>
+              <p>
+                {task.description}
+              </p>
 
               {officialUrl && (
                 <div className="official-source">
@@ -916,37 +1902,60 @@ export default function TaskDashboard() {
 
             <span
               className={`task-status ${
-                STATUS_CLASS[status] || ""
+                STATUS_CLASS[
+                  status
+                ] || ""
               }`}
             >
-              {STATUS_LABELS[status] || status}
+              {STATUS_LABELS[
+                status
+              ] || status}
             </span>
           </div>
 
           <div className="task-metrics">
             <div>
-              <span>Automation</span>
-              <strong>{automation}%</strong>
+              <span>
+                Automation
+              </span>
+
+              <strong>
+                {automation}%
+              </strong>
             </div>
 
             <div>
-              <span>Steps</span>
+              <span>
+                Steps
+              </span>
+
               <strong>
-                {Array.isArray(task.steps)
+                {Array.isArray(
+                  task.steps
+                )
                   ? task.steps.length
                   : 0}
               </strong>
             </div>
 
             <div>
-              <span>Completed</span>
-              <strong>{completedSteps}</strong>
+              <span>
+                Completed
+              </span>
+
+              <strong>
+                {completedSteps}
+              </strong>
             </div>
 
             <div>
-              <span>Review</span>
+              <span>
+                Review
+              </span>
+
               <strong>
-                {status === "READY_FOR_REVIEW"
+                {status ===
+                "READY_FOR_REVIEW"
                   ? "YES"
                   : "—"}
               </strong>
@@ -959,7 +1968,9 @@ export default function TaskDashboard() {
                 Automation progress
               </strong>
 
-              <span>{automation}%</span>
+              <span>
+                {automation}%
+              </span>
             </div>
 
             <div className="task-progress">
@@ -967,16 +1978,20 @@ export default function TaskDashboard() {
                 style={{
                   width: `${Math.min(
                     100,
-                    Math.max(0, automation)
+                    Math.max(
+                      0,
+                      automation
+                    )
                   )}%`,
                 }}
               />
             </div>
 
             <small>
-              Automation percentage describes how much
-              of the task can technically be automated.
-              It is not a task score or success guarantee.
+              Automation percentage describes
+              how much of the task can technically
+              be automated. It is not a task score
+              or success guarantee.
             </small>
           </div>
 
@@ -989,59 +2004,97 @@ export default function TaskDashboard() {
               "SUBMITTED",
               "COMPLETED",
               "PAID",
-            ].map((step, index, array) => {
-              const currentIndex =
-                array.indexOf(status);
+            ].map(
+              (
+                step,
+                index,
+                array
+              ) => {
+                const currentIndex =
+                  array.indexOf(
+                    status
+                  );
 
-              const stepIndex = index;
+                const stepIndex =
+                  index;
 
-              let className = "lifecycle-step";
+                let className =
+                  "lifecycle-step";
 
-              if (
-                currentIndex >= 0 &&
-                stepIndex < currentIndex
-              ) {
-                className += " done";
-              }
+                if (
+                  currentIndex >=
+                    0 &&
+                  stepIndex <
+                    currentIndex
+                ) {
+                  className +=
+                    " done";
+                }
 
-              if (step === status) {
-                className += " current";
-              }
+                if (
+                  step ===
+                  status
+                ) {
+                  className +=
+                    " current";
+                }
 
-              return (
-                <React.Fragment key={step}>
-                  <div className={className}>
-                    <span>
-                      {stepIndex + 1}
-                    </span>
+                return (
+                  <React.Fragment
+                    key={step}
+                  >
+                    <div
+                      className={
+                        className
+                      }
+                    >
+                      <span>
+                        {stepIndex +
+                          1}
+                      </span>
 
-                    <strong>
-                      {STATUS_LABELS[step]}
-                    </strong>
-                  </div>
-
-                  {index < array.length - 1 && (
-                    <div className="lifecycle-arrow">
-                      →
+                      <strong>
+                        {
+                          STATUS_LABELS[
+                            step
+                          ]
+                        }
+                      </strong>
                     </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
+
+                    {index <
+                      array.length -
+                        1 && (
+                      <div className="lifecycle-arrow">
+                        →
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              }
+            )}
           </div>
 
-          {Array.isArray(task.steps) &&
-            task.steps.length > 0 && (
+          {Array.isArray(
+            task.steps
+          ) &&
+            task.steps.length >
+              0 && (
               <div className="task-steps-card">
                 <div className="section-label">
                   TASK PLAN
                 </div>
 
-                <h3>Execution Steps</h3>
+                <h3>
+                  Execution Steps
+                </h3>
 
                 <div className="task-steps">
                   {task.steps.map(
-                    (step, index) => (
+                    (
+                      step,
+                      index
+                    ) => (
                       <div
                         className="task-step"
                         key={
@@ -1051,7 +2104,8 @@ export default function TaskDashboard() {
                         }
                       >
                         <div className="task-step-number">
-                          {index + 1}
+                          {index +
+                            1}
                         </div>
 
                         <div className="task-step-content">
@@ -1059,12 +2113,17 @@ export default function TaskDashboard() {
                             {step.title ||
                               step.name ||
                               step.action ||
-                              `Step ${index + 1}`}
+                              `Step ${
+                                index +
+                                1
+                              }`}
                           </strong>
 
                           {step.description && (
                             <p>
-                              {step.description}
+                              {
+                                step.description
+                              }
                             </p>
                           )}
 
@@ -1101,25 +2160,41 @@ export default function TaskDashboard() {
               </div>
 
               <h3>
-                {task.qualityCheck.passed
+                {task.qualityCheck
+                  .passed
                   ? "✓ Quality check passed"
                   : "⚠ Quality review required"}
               </h3>
 
-              {task.qualityCheck.summary && (
+              {task.qualityCheck
+                .summary && (
                 <p>
-                  {task.qualityCheck.summary}
+                  {
+                    task
+                      .qualityCheck
+                      .summary
+                  }
                 </p>
               )}
 
               {Array.isArray(
-                task.qualityCheck.issues
+                task.qualityCheck
+                  .issues
               ) &&
-                task.qualityCheck.issues.length > 0 && (
+                task.qualityCheck
+                  .issues.length >
+                  0 && (
                   <ul>
                     {task.qualityCheck.issues.map(
-                      (issue, index) => (
-                        <li key={index}>
+                      (
+                        issue,
+                        index
+                      ) => (
+                        <li
+                          key={
+                            index
+                          }
+                        >
                           {issue}
                         </li>
                       )
@@ -1129,9 +2204,7 @@ export default function TaskDashboard() {
             </div>
           )}
 
-          /*
-           * OFFICIAL OPPORTUNITY SOURCE
-           */
+          {/* OFFICIAL OPPORTUNITY SOURCE */}
           {officialUrl && (
             <div className="official-source-card">
               <div>
@@ -1161,10 +2234,9 @@ export default function TaskDashboard() {
             </div>
           )}
 
-          /*
-           * MANUAL SUBMISSION DETAILS
-           */
-          {status === "APPROVED" && (
+          {/* MANUAL SUBMISSION DETAILS */}
+          {status ===
+            "APPROVED" && (
             <div className="submission-card">
               <div className="section-label">
                 MANUAL SUBMISSION
@@ -1175,16 +2247,18 @@ export default function TaskDashboard() {
               </h3>
 
               <p>
-                Open the official website, review the
-                prepared output, and submit it yourself.
-                OpportunityAI will only record your
-                confirmation.
+                Open the official website, review
+                the prepared output, and submit it
+                yourself. OpportunityAI will only
+                record your confirmation.
               </p>
 
               {officialUrl && (
                 <a
                   className="secondary-button"
-                  href={officialUrl}
+                  href={
+                    officialUrl
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -1198,10 +2272,16 @@ export default function TaskDashboard() {
 
               <input
                 type="text"
-                value={submissionReference}
-                onChange={(event) =>
+                value={
+                  submissionReference
+                }
+                onChange={(
+                  event
+                ) =>
                   setSubmissionReference(
-                    event.target.value
+                    event
+                      .target
+                      .value
                   )
                 }
                 placeholder="Optional platform/application reference"
@@ -1212,10 +2292,16 @@ export default function TaskDashboard() {
               </label>
 
               <textarea
-                value={submissionNotes}
-                onChange={(event) =>
+                value={
+                  submissionNotes
+                }
+                onChange={(
+                  event
+                ) =>
                   setSubmissionNotes(
-                    event.target.value
+                    event
+                      .target
+                      .value
                   )
                 }
                 placeholder="Optional notes about what you submitted"
@@ -1224,34 +2310,37 @@ export default function TaskDashboard() {
             </div>
           )}
 
-          /*
-           * PAYMENT RECORD
-           *
-           * Only visible after completion.
-           * It does not automatically mark anything as paid.
-           */
-          {status === "COMPLETED" && (
+          {/* PAYMENT RECORD */}
+          {status ===
+            "COMPLETED" && (
             <div className="payment-card">
               <div className="section-label">
                 PAYMENT RECORD
               </div>
 
-              <h3>Record actual payment</h3>
+              <h3>
+                Record actual payment
+              </h3>
 
               <p>
-                Payment is not inferred from completion.
-                Enter the actual payment you received
-                and provide a reference/evidence.
+                Payment is not inferred from
+                completion. Enter the actual
+                payment you received and provide
+                a reference/evidence.
               </p>
 
               {expectedPayment.amount && (
                 <div className="expected-payment">
-                  Expected:
-                  {" "}
+                  Expected:{" "}
                   <strong>
-                    {expectedPayment.amount}{" "}
-                    {expectedPayment.currency}
+                    {
+                      expectedPayment.amount
+                    }{" "}
+                    {
+                      expectedPayment.currency
+                    }
                   </strong>
+
                   {expectedPayment.provider
                     ? ` via ${expectedPayment.provider}`
                     : ""}
@@ -1268,10 +2357,16 @@ export default function TaskDashboard() {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={paymentAmount}
-                    onChange={(event) =>
+                    value={
+                      paymentAmount
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPaymentAmount(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="0.00"
@@ -1285,10 +2380,16 @@ export default function TaskDashboard() {
 
                   <input
                     type="text"
-                    value={paymentCurrency}
-                    onChange={(event) =>
+                    value={
+                      paymentCurrency
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPaymentCurrency(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="USD / TZS / EUR"
@@ -1302,10 +2403,16 @@ export default function TaskDashboard() {
 
                   <input
                     type="text"
-                    value={paymentProvider}
-                    onChange={(event) =>
+                    value={
+                      paymentProvider
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPaymentProvider(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="PayPal / Bank / Mobile Money"
@@ -1319,10 +2426,16 @@ export default function TaskDashboard() {
 
                   <input
                     type="text"
-                    value={paymentMethod}
-                    onChange={(event) =>
+                    value={
+                      paymentMethod
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setPaymentMethod(
-                        event.target.value
+                        event
+                          .target
+                          .value
                       )
                     }
                     placeholder="Transfer / Wallet / Card"
@@ -1336,10 +2449,16 @@ export default function TaskDashboard() {
 
               <input
                 type="text"
-                value={paymentReference}
-                onChange={(event) =>
+                value={
+                  paymentReference
+                }
+                onChange={(
+                  event
+                ) =>
                   setPaymentReference(
-                    event.target.value
+                    event
+                      .target
+                      .value
                   )
                 }
                 placeholder="Transaction/reference number"
@@ -1350,10 +2469,16 @@ export default function TaskDashboard() {
               </label>
 
               <textarea
-                value={paymentEvidence}
-                onChange={(event) =>
+                value={
+                  paymentEvidence
+                }
+                onChange={(
+                  event
+                ) =>
                   setPaymentEvidence(
-                    event.target.value
+                    event
+                      .target
+                      .value
                   )
                 }
                 placeholder="Describe the evidence or provide a permitted reference/link"
@@ -1362,10 +2487,15 @@ export default function TaskDashboard() {
 
               <button
                 className="primary-button"
-                onClick={markPaid}
-                disabled={!!actionLoading}
+                onClick={
+                  markPaid
+                }
+                disabled={
+                  !!actionLoading
+                }
               >
-                {actionLoading === "paid"
+                {actionLoading ===
+                "paid"
                   ? "Saving Payment..."
                   : "Confirm Payment Received"}
               </button>
@@ -1380,42 +2510,62 @@ export default function TaskDashboard() {
             <div className="task-actions">
               <button
                 className="secondary-button"
-                onClick={refreshTask}
-                disabled={!!actionLoading}
+                onClick={
+                  refreshTask
+                }
+                disabled={
+                  !!actionLoading
+                }
               >
-                {actionLoading === "refresh"
+                {actionLoading ===
+                "refresh"
                   ? "Refreshing..."
                   : "Refresh"}
               </button>
 
-              {status === "QUEUED" && (
+              {status ===
+                "QUEUED" && (
                 <button
                   className="primary-button"
-                  onClick={runTask}
-                  disabled={!!actionLoading}
+                  onClick={
+                    runTask
+                  }
+                  disabled={
+                    !!actionLoading
+                  }
                 >
-                  {actionLoading === "run"
+                  {actionLoading ===
+                  "run"
                     ? "Running..."
                     : "Run AI Task"}
                 </button>
               )}
 
-              {status === "READY_FOR_REVIEW" && (
+              {status ===
+                "READY_FOR_REVIEW" && (
                 <button
                   className="primary-button"
-                  onClick={approveTask}
-                  disabled={!!actionLoading}
+                  onClick={
+                    approveTask
+                  }
+                  disabled={
+                    !!actionLoading
+                  }
                 >
-                  {actionLoading === "approve"
+                  {actionLoading ===
+                  "approve"
                     ? "Approving..."
                     : "Approve Task"}
                 </button>
               )}
 
-              {status === "APPROVED" && (
+              {status ===
+                "APPROVED" && (
                 <button
                   className="primary-button"
-                  onClick={submitTask}
+                  onClick={
+                    submitTask
+                  }
                   disabled={
                     !!actionLoading ||
                     !officialUrl
@@ -1426,19 +2576,26 @@ export default function TaskDashboard() {
                       : "Confirm your manual submission."
                   }
                 >
-                  {actionLoading === "submit"
+                  {actionLoading ===
+                  "submit"
                     ? "Saving Submission..."
                     : "Confirm Manual Submission"}
                 </button>
               )}
 
-              {status === "SUBMITTED" && (
+              {status ===
+                "SUBMITTED" && (
                 <button
                   className="primary-button"
-                  onClick={completeTask}
-                  disabled={!!actionLoading}
+                  onClick={
+                    completeTask
+                  }
+                  disabled={
+                    !!actionLoading
+                  }
                 >
-                  {actionLoading === "complete"
+                  {actionLoading ===
+                  "complete"
                     ? "Saving..."
                     : "Confirm Completion"}
                 </button>
@@ -1446,49 +2603,54 @@ export default function TaskDashboard() {
             </div>
           </div>
 
-          {status === "READY_FOR_REVIEW" && (
+          {status ===
+            "READY_FOR_REVIEW" && (
             <div className="review-warning">
               <strong>
                 Human review required
               </strong>
 
               <p>
-                Review the AI-generated output before
-                approving. External submissions,
-                CAPTCHA-protected actions, authentication
-                steps, and platform-restricted actions
+                Review the AI-generated output
+                before approving. External
+                submissions, CAPTCHA-protected
+                actions, authentication steps,
+                and platform-restricted actions
                 are not bypassed automatically.
               </p>
             </div>
           )}
 
-          {status === "APPROVED" && (
+          {status ===
+            "APPROVED" && (
             <div className="review-warning">
               <strong>
                 Manual submission required
               </strong>
 
               <p>
-                OpportunityAI will not submit applications
-                or work on your behalf. Open the official
-                platform, review the prepared material,
-                submit it yourself, then confirm the
+                OpportunityAI will not submit
+                applications or work on your
+                behalf. Open the official platform,
+                review the prepared material, submit
+                it yourself, then confirm the
                 submission above.
               </p>
             </div>
           )}
 
-          {status === "COMPLETED" && (
+          {status ===
+            "COMPLETED" && (
             <div className="payment-warning">
               <strong>
                 Payment has NOT been assumed.
               </strong>
 
               <p>
-                Completion only means the work was
-                confirmed complete. Record payment
-                separately only after you actually
-                receive it.
+                Completion only means the work
+                was confirmed complete. Record
+                payment separately only after you
+                actually receive it.
               </p>
             </div>
           )}
@@ -1517,6 +2679,37 @@ export default function TaskDashboard() {
           max-width: 760px;
           color: #64748b;
           line-height: 1.7;
+        }
+
+        .signed-in-user {
+          margin-top: 10px;
+          color: #64748b;
+          font-size: 13px;
+        }
+
+        .signed-in-user strong {
+          color: #0f172a;
+        }
+
+        .dashboard-account-actions {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+
+        .logout-button {
+          border: 1px solid #fecaca;
+          background: #fff;
+          color: #b91c1c;
+          border-radius: 10px;
+          padding: 10px 14px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .logout-button:hover {
+          background: #fef2f2;
         }
 
         .task-create-card,
@@ -1558,6 +2751,7 @@ export default function TaskDashboard() {
         .payment-card input,
         .payment-card textarea {
           width: 100%;
+          box-sizing: border-box;
           border: 1px solid #cbd5e1;
           border-radius: 10px;
           padding: 12px 13px;
@@ -1966,8 +3160,36 @@ export default function TaskDashboard() {
           font-size: 13px;
         }
 
+        .success-message {
+          padding: 12px 14px;
+          border-radius: 10px;
+          background: #dcfce7;
+          color: #166534;
+          border: 1px solid #bbf7d0;
+        }
+
+        .error-message {
+          padding: 12px 14px;
+          border-radius: 10px;
+          background: #fee2e2;
+          color: #991b1b;
+          border: 1px solid #fecaca;
+        }
+
         @media (max-width: 700px) {
-          .task-dashboard-header,
+          .task-dashboard-header {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .dashboard-account-actions {
+            width: 100%;
+          }
+
+          .dashboard-account-actions button {
+            flex: 1;
+          }
+
           .task-summary-card,
           .official-source-card {
             flex-direction: column;
