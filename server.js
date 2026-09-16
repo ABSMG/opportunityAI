@@ -676,8 +676,7 @@ async function loadTask(
   id,
   ownerId = null
 ) {
-  let task =
-    null;
+  let task = null;
 
   if (
     supabase &&
@@ -687,6 +686,26 @@ async function loadTask(
       await getTaskFromSupabase(
         id
       );
+  }
+
+  if (!task) {
+    task =
+      taskStore.get(id);
+  }
+
+  // Strict ownership:
+  // authenticated users may only access
+  // tasks belonging to their own account.
+  if (
+    task &&
+    ownerId &&
+    task.ownerId !== ownerId
+  ) {
+    return null;
+  }
+
+  return task;
+
   }
 
   if (!task) {
@@ -2367,25 +2386,24 @@ app.get(
           req.userId
         );
 
-      const ownedTasks =
-        tasks.filter(
-          (task) =>
-            !task.ownerId ||
-            task.ownerId ===
-              req.userId
-        );
+     const ownedTasks =
+  tasks.filter(
+    (task) =>
+      task.ownerId ===
+      req.userId
+  );
 
-      return res.json({
-        success: true,
+return res.json({
+  success: true,
 
-        count:
-          ownedTasks.length,
+  count:
+    ownedTasks.length,
 
-        tasks:
-          ownedTasks.map(
-            serializeTask
-          )
-      });
+  tasks:
+    ownedTasks.map(
+      serializeTask
+    )
+}); 
     } catch (error) {
       console.error(
         "Get AI tasks error:",
