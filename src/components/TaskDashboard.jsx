@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 const API_BASE = "";
 
@@ -24,6 +24,70 @@ const STATUS_CLASS = {
   FAILED: "failed",
 };
 
+const isValidHttpUrl = (value) => {
+  if (!value || typeof value !== "string") return false;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+const getOfficialUrl = (task) => {
+  const candidates = [
+    task?.officialUrl,
+    task?.official_url,
+    task?.metadata?.officialUrl,
+    task?.metadata?.official_url,
+    task?.metadata?.officialLink,
+    task?.metadata?.official_link,
+    task?.submission?.officialUrl,
+    task?.submission?.official_url,
+    task?.opportunity?.officialUrl,
+    task?.opportunity?.official_url,
+    task?.opportunity?.url,
+    task?.sourceUrl,
+    task?.source_url,
+  ];
+
+  return candidates.find(isValidHttpUrl) || "";
+};
+
+const getExpectedPayment = (task) => {
+  const payment =
+    task?.payment ||
+    task?.metadata?.payment ||
+    task?.opportunity?.payment ||
+    {};
+
+  return {
+    amount:
+      payment.amount ??
+      task?.paymentAmount ??
+      task?.metadata?.paymentAmount ??
+      "",
+    currency:
+      payment.currency ??
+      task?.paymentCurrency ??
+      task?.metadata?.paymentCurrency ??
+      "",
+    provider:
+      payment.provider ??
+      task?.paymentProvider ??
+      task?.metadata?.paymentProvider ??
+      "",
+    method:
+      payment.paymentMethod ??
+      payment.payment_method ??
+      task?.paymentMethod ??
+      "",
+    status: payment.status || "",
+    paidAt: payment.paidAt || payment.paid_at || "",
+  };
+};
+
 export default function TaskDashboard() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -36,6 +100,33 @@ export default function TaskDashboard() {
   const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  /*
+   * Submission details.
+   * These are entered by the user because OpportunityAI
+   * does not submit externally on the user's behalf.
+   */
+  const [submissionReference, setSubmissionReference] =
+    useState("");
+  const [submissionNotes, setSubmissionNotes] =
+    useState("");
+
+  /*
+   * Payment details.
+   * Payment is recorded only after the user confirms
+   * that the money was actually received.
+   */
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentCurrency, setPaymentCurrency] =
+    useState("");
+  const [paymentProvider, setPaymentProvider] =
+    useState("");
+  const [paymentMethod, setPaymentMethod] =
+    useState("");
+  const [paymentReference, setPaymentReference] =
+    useState("");
+  const [paymentEvidence, setPaymentEvidence] =
+    useState("");
 
   const request = async (url, options = {}) => {
     const response = await fetch(`${API_BASE}${url}`, {
@@ -62,9 +153,6 @@ export default function TaskDashboard() {
   /*
    * Load tasks directly through the backend.
    * Backend reads the tasks from Supabase.
-   *
-   * selectedTaskId allows the Dashboard to keep the
-   * currently selected task after refreshing the list.
    */
   const loadTasks = async (selectedTaskId = null) => {
     setTasksLoading(true);
@@ -79,11 +167,6 @@ export default function TaskDashboard() {
 
       setTasks(loadedTasks);
 
-      /*
-       * Preserve the task that is currently selected.
-       * If a selectedTaskId was explicitly supplied,
-       * use that task after loading.
-       */
       if (loadedTasks.length > 0) {
         setTask((currentTask) => {
           const preferredId =
@@ -100,17 +183,9 @@ export default function TaskDashboard() {
             }
           }
 
-          /*
-           * If there is no valid current selection,
-           * show the newest task.
-           */
           return currentTask || loadedTasks[0];
         });
       } else {
-        /*
-         * Only clear the selection when there are
-         * genuinely no tasks in Supabase.
-         */
         setTask((currentTask) =>
           currentTask?.id ? currentTask : null
         );
@@ -122,16 +197,56 @@ export default function TaskDashboard() {
     }
   };
 
-  /*
-   * Load Supabase tasks when Dashboard opens.
-   */
   useEffect(() => {
     loadTasks();
   }, []);
 
+  /*
+   * Keep payment fields synchronized with a task
+   * when the user selects another task.
+   */
+  const syncPaymentFields = (selectedTask) => {
+    const payment = getExpectedPayment(selectedTask);
+
+    setPaymentAmount(
+      payment.amount !== undefined &&
+        payment.amount !== null
+        ? String(payment.amount)
+        : ""
+    );
+
+    setPaymentCurrency(payment.currency || "");
+    setPaymentProvider(payment.provider || "");
+    setPaymentMethod(payment.method || "");
+
+    setPaymentReference(
+      selectedTask?.payment?.providerReference ||
+        selectedTask?.payment?.provider_reference ||
+        ""
+    );
+
+    setPaymentEvidence(
+      selectedTask?.payment?.evidence?.url ||
+        selectedTask?.payment?.evidence ||
+        ""
+    );
+  };
+
+  const syncSubmissionFields = (selectedTask) => {
+    setSubmissionReference(
+      selectedTask?.submission?.reference || ""
+    );
+
+    setSubmissionNotes(
+      selectedTask?.submission?.notes || ""
+    );
+  };
+
   const createTask = async () => {
     if (!title.trim() || !description.trim()) {
-      setError("Please enter both a task title and description.");
+      setError(
+        "Please enter both a task title and description."
+      );
       return;
     }
 
@@ -165,15 +280,10 @@ export default function TaskDashboard() {
 
       const createdTask = data.task || data;
 
-      /*
-       * Immediately select the newly created task.
-       */
       setTask(createdTask);
+      syncPaymentFields(createdTask);
+      syncSubmissionFields(createdTask);
 
-      /*
-       * Refresh the list from Supabase while explicitly
-       * preserving/selecting the newly created task.
-       */
       await loadTasks(createdTask?.id || null);
 
       setMessage("Task created successfully.");
@@ -192,13 +302,12 @@ export default function TaskDashboard() {
     if (!selectedTask?.id) return;
 
     setTask(selectedTask);
+    syncPaymentFields(selectedTask);
+    syncSubmissionFields(selectedTask);
+
     setError("");
     setMessage("");
 
-    /*
-     * If the selected task is only a list snapshot,
-     * fetch the latest version from the backend.
-     */
     try {
       const data = await request(
         `/api/tasks/${selectedTask.id}`
@@ -207,11 +316,9 @@ export default function TaskDashboard() {
       const refreshedTask = data.task || data;
 
       setTask(refreshedTask);
+      syncPaymentFields(refreshedTask);
+      syncSubmissionFields(refreshedTask);
 
-      /*
-       * Update the list item with the latest task data
-       * without losing the user's selection.
-       */
       setTasks((currentTasks) =>
         currentTasks.map((savedTask) =>
           savedTask.id === refreshedTask.id
@@ -220,10 +327,6 @@ export default function TaskDashboard() {
         )
       );
     } catch (err) {
-      /*
-       * Keep the selected list task visible if the
-       * individual refresh fails.
-       */
       setTask(selectedTask);
       setError(err.message);
     }
@@ -236,6 +339,7 @@ export default function TaskDashboard() {
 
     setActionLoading("refresh");
     setError("");
+    setMessage("");
 
     try {
       const data = await request(
@@ -245,11 +349,9 @@ export default function TaskDashboard() {
       const refreshedTask = data.task || data;
 
       setTask(refreshedTask);
+      syncPaymentFields(refreshedTask);
+      syncSubmissionFields(refreshedTask);
 
-      /*
-       * Keep the Dashboard list synchronized with Supabase
-       * while preserving the current selection.
-       */
       await loadTasks(selectedTaskId);
     } catch (err) {
       setError(err.message);
@@ -262,6 +364,24 @@ export default function TaskDashboard() {
     if (!task?.id) return;
 
     const selectedTaskId = task.id;
+    const officialUrl = getOfficialUrl(task);
+
+    /*
+     * A real opportunity should have an official source.
+     * This does not block manually-created generic tasks
+     * that do not claim to be external opportunities.
+     */
+    if (
+      (task.type === "opportunity" ||
+        task.type === "remote_job" ||
+        task.type === "freelance") &&
+      !officialUrl
+    ) {
+      setError(
+        "This opportunity does not have a valid official website/link yet. Open or add the official source before running it."
+      );
+      return;
+    }
 
     setActionLoading("run");
     setError("");
@@ -272,12 +392,17 @@ export default function TaskDashboard() {
         `/api/tasks/${selectedTaskId}/run`,
         {
           method: "POST",
+          body: JSON.stringify({
+            officialUrl: officialUrl || null,
+          }),
         }
       );
 
       const updatedTask = data.task || data;
 
       setTask(updatedTask);
+      syncPaymentFields(updatedTask);
+      syncSubmissionFields(updatedTask);
 
       await loadTasks(selectedTaskId);
 
@@ -315,6 +440,8 @@ export default function TaskDashboard() {
       const updatedTask = data.task || data;
 
       setTask(updatedTask);
+      syncPaymentFields(updatedTask);
+      syncSubmissionFields(updatedTask);
 
       await loadTasks(selectedTaskId);
 
@@ -326,11 +453,27 @@ export default function TaskDashboard() {
     }
   };
 
+  /*
+   * REAL MANUAL SUBMISSION FLOW
+   *
+   * OpportunityAI does NOT submit the task externally.
+   * The user opens the official website and submits it
+   * themselves, then confirms what happened.
+   */
   const submitTask = async () => {
     if (!task?.id) return;
 
+    const officialUrl = getOfficialUrl(task);
+
+    if (!officialUrl) {
+      setError(
+        "No valid official submission link is available for this task."
+      );
+      return;
+    }
+
     const confirmed = window.confirm(
-      "Have you personally reviewed this task and manually submitted it through the permitted external platform?"
+      "Open the official website, review the prepared material, and submit the task yourself. Have you personally completed the external submission?"
     );
 
     if (!confirmed) {
@@ -351,8 +494,12 @@ export default function TaskDashboard() {
           body: JSON.stringify({
             submittedBy: "user",
             method: "manual",
+            officialUrl,
+            reference:
+              submissionReference.trim() || null,
+            notes:
+              submissionNotes.trim() || null,
             confirmedByUser: true,
-            note: "Submitted through the permitted external platform.",
           }),
         }
       );
@@ -360,10 +507,14 @@ export default function TaskDashboard() {
       const updatedTask = data.task || data;
 
       setTask(updatedTask);
+      syncPaymentFields(updatedTask);
+      syncSubmissionFields(updatedTask);
 
       await loadTasks(selectedTaskId);
 
-      setMessage("Task marked as submitted.");
+      setMessage(
+        "Submission confirmed and saved to your task history."
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -371,8 +522,21 @@ export default function TaskDashboard() {
     }
   };
 
+  /*
+   * Completion remains user-confirmed.
+   * AI does not falsely claim that an external platform
+   * accepted or completed the work.
+   */
   const completeTask = async () => {
     if (!task?.id) return;
+
+    const confirmed = window.confirm(
+      "Confirm that the external task/work has actually been completed or accepted."
+    );
+
+    if (!confirmed) {
+      return;
+    }
 
     const selectedTaskId = task.id;
 
@@ -387,7 +551,8 @@ export default function TaskDashboard() {
           method: "POST",
           body: JSON.stringify({
             completedBy: "user",
-            result: "Task completed.",
+            confirmedByUser: true,
+            result: "Task completion confirmed by the task owner.",
           }),
         }
       );
@@ -395,10 +560,14 @@ export default function TaskDashboard() {
       const updatedTask = data.task || data;
 
       setTask(updatedTask);
+      syncPaymentFields(updatedTask);
+      syncSubmissionFields(updatedTask);
 
       await loadTasks(selectedTaskId);
 
-      setMessage("Task marked as completed.");
+      setMessage(
+        "Task completion confirmed and saved."
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -406,11 +575,46 @@ export default function TaskDashboard() {
     }
   };
 
+  /*
+   * REAL PAYMENT RECORDING
+   *
+   * Payment is never inferred from task completion.
+   * User must provide actual payment information.
+   */
   const markPaid = async () => {
     if (!task?.id) return;
 
+    if (!paymentAmount || Number(paymentAmount) <= 0) {
+      setError(
+        "Enter the actual amount you received."
+      );
+      return;
+    }
+
+    if (!paymentCurrency.trim()) {
+      setError("Enter the payment currency.");
+      return;
+    }
+
+    if (!paymentProvider.trim()) {
+      setError("Enter the payment provider.");
+      return;
+    }
+
+    if (!paymentMethod.trim()) {
+      setError("Enter the payment method.");
+      return;
+    }
+
+    if (!paymentEvidence.trim()) {
+      setError(
+        "Add payment evidence or a reference before recording payment."
+      );
+      return;
+    }
+
     const confirmed = window.confirm(
-      "Confirm that you have actually received the payment for this task."
+      "Confirm that this payment was actually received and that the information you entered is accurate."
     );
 
     if (!confirmed) {
@@ -432,6 +636,19 @@ export default function TaskDashboard() {
             recordedBy: "user",
             status: "PAID",
             confirmedByUser: true,
+            amount: Number(paymentAmount),
+            currency: paymentCurrency.trim(),
+            provider: paymentProvider.trim(),
+            paymentMethod: paymentMethod.trim(),
+            providerReference:
+              paymentReference.trim() || null,
+            evidence: {
+              reference:
+                paymentReference.trim() || null,
+              details: paymentEvidence.trim(),
+            },
+            notes:
+              "Payment confirmed by the task owner.",
           }),
         }
       );
@@ -439,10 +656,14 @@ export default function TaskDashboard() {
       const updatedTask = data.task || data;
 
       setTask(updatedTask);
+      syncPaymentFields(updatedTask);
+      syncSubmissionFields(updatedTask);
 
       await loadTasks(selectedTaskId);
 
-      setMessage("Payment recorded.");
+      setMessage(
+        "Actual payment has been recorded in the task history."
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -455,6 +676,17 @@ export default function TaskDashboard() {
     setTitle("");
     setDescription("");
     setType("opportunity");
+
+    setSubmissionReference("");
+    setSubmissionNotes("");
+
+    setPaymentAmount("");
+    setPaymentCurrency("");
+    setPaymentProvider("");
+    setPaymentMethod("");
+    setPaymentReference("");
+    setPaymentEvidence("");
+
     setError("");
     setMessage("");
   };
@@ -464,6 +696,22 @@ export default function TaskDashboard() {
   );
 
   const status = task?.status || "QUEUED";
+
+  const officialUrl = useMemo(
+    () => getOfficialUrl(task),
+    [task]
+  );
+
+  const expectedPayment = useMemo(
+    () => getExpectedPayment(task),
+    [task]
+  );
+
+  const completedSteps = Array.isArray(task?.steps)
+    ? task.steps.filter(
+        (step) => step.status === "COMPLETED"
+      ).length
+    : 0;
 
   return (
     <section className="task-dashboard">
@@ -499,9 +747,7 @@ export default function TaskDashboard() {
             CREATE TASK
           </div>
 
-          <label>
-            Task title
-          </label>
+          <label>Task title</label>
 
           <input
             type="text"
@@ -512,9 +758,7 @@ export default function TaskDashboard() {
             placeholder="Example: Prepare a freelance proposal"
           />
 
-          <label>
-            Task description
-          </label>
+          <label>Task description</label>
 
           <textarea
             value={description}
@@ -525,9 +769,7 @@ export default function TaskDashboard() {
             rows={6}
           />
 
-          <label>
-            Task type
-          </label>
+          <label>Task type</label>
 
           <select
             value={type}
@@ -646,13 +888,30 @@ export default function TaskDashboard() {
                 TASK
               </div>
 
-              <h3>
-                {task.title}
-              </h3>
+              <h3>{task.title}</h3>
 
-              <p>
-                {task.description}
-              </p>
+              <p>{task.description}</p>
+
+              {officialUrl && (
+                <div className="official-source">
+                  <span>
+                    Official source
+                  </span>
+
+                  <a
+                    href={officialUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      setMessage(
+                        "Official source opened. Review the opportunity carefully before continuing."
+                      )
+                    }
+                  >
+                    Open Official Website →
+                  </a>
+                </div>
+              )}
             </div>
 
             <span
@@ -681,14 +940,7 @@ export default function TaskDashboard() {
 
             <div>
               <span>Completed</span>
-              <strong>
-                {Array.isArray(task.steps)
-                  ? task.steps.filter(
-                      (step) =>
-                        step.status === "COMPLETED"
-                    ).length
-                  : 0}
-              </strong>
+              <strong>{completedSteps}</strong>
             </div>
 
             <div>
@@ -707,9 +959,7 @@ export default function TaskDashboard() {
                 Automation progress
               </strong>
 
-              <span>
-                {automation}%
-              </span>
+              <span>{automation}%</span>
             </div>
 
             <div className="task-progress">
@@ -747,7 +997,10 @@ export default function TaskDashboard() {
 
               let className = "lifecycle-step";
 
-              if (stepIndex < currentIndex) {
+              if (
+                currentIndex >= 0 &&
+                stepIndex < currentIndex
+              ) {
                 className += " done";
               }
 
@@ -876,6 +1129,249 @@ export default function TaskDashboard() {
             </div>
           )}
 
+          /*
+           * OFFICIAL OPPORTUNITY SOURCE
+           */
+          {officialUrl && (
+            <div className="official-source-card">
+              <div>
+                <div className="section-label">
+                  OFFICIAL SOURCE
+                </div>
+
+                <h3>
+                  Continue on the official platform
+                </h3>
+
+                <p>
+                  OpportunityAI prepares and checks
+                  your work, but does not impersonate
+                  you or submit externally.
+                </p>
+              </div>
+
+              <a
+                className="primary-button"
+                href={officialUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open Official Website
+              </a>
+            </div>
+          )}
+
+          /*
+           * MANUAL SUBMISSION DETAILS
+           */
+          {status === "APPROVED" && (
+            <div className="submission-card">
+              <div className="section-label">
+                MANUAL SUBMISSION
+              </div>
+
+              <h3>
+                Submit through the official platform
+              </h3>
+
+              <p>
+                Open the official website, review the
+                prepared output, and submit it yourself.
+                OpportunityAI will only record your
+                confirmation.
+              </p>
+
+              {officialUrl && (
+                <a
+                  className="secondary-button"
+                  href={officialUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open Official Submission Page
+                </a>
+              )}
+
+              <label>
+                Submission/reference ID
+              </label>
+
+              <input
+                type="text"
+                value={submissionReference}
+                onChange={(event) =>
+                  setSubmissionReference(
+                    event.target.value
+                  )
+                }
+                placeholder="Optional platform/application reference"
+              />
+
+              <label>
+                Submission notes
+              </label>
+
+              <textarea
+                value={submissionNotes}
+                onChange={(event) =>
+                  setSubmissionNotes(
+                    event.target.value
+                  )
+                }
+                placeholder="Optional notes about what you submitted"
+                rows={4}
+              />
+            </div>
+          )}
+
+          /*
+           * PAYMENT RECORD
+           *
+           * Only visible after completion.
+           * It does not automatically mark anything as paid.
+           */
+          {status === "COMPLETED" && (
+            <div className="payment-card">
+              <div className="section-label">
+                PAYMENT RECORD
+              </div>
+
+              <h3>Record actual payment</h3>
+
+              <p>
+                Payment is not inferred from completion.
+                Enter the actual payment you received
+                and provide a reference/evidence.
+              </p>
+
+              {expectedPayment.amount && (
+                <div className="expected-payment">
+                  Expected:
+                  {" "}
+                  <strong>
+                    {expectedPayment.amount}{" "}
+                    {expectedPayment.currency}
+                  </strong>
+                  {expectedPayment.provider
+                    ? ` via ${expectedPayment.provider}`
+                    : ""}
+                </div>
+              )}
+
+              <div className="payment-grid">
+                <div>
+                  <label>
+                    Amount received
+                  </label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={paymentAmount}
+                    onChange={(event) =>
+                      setPaymentAmount(
+                        event.target.value
+                      )
+                    }
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div>
+                  <label>
+                    Currency
+                  </label>
+
+                  <input
+                    type="text"
+                    value={paymentCurrency}
+                    onChange={(event) =>
+                      setPaymentCurrency(
+                        event.target.value
+                      )
+                    }
+                    placeholder="USD / TZS / EUR"
+                  />
+                </div>
+
+                <div>
+                  <label>
+                    Payment provider
+                  </label>
+
+                  <input
+                    type="text"
+                    value={paymentProvider}
+                    onChange={(event) =>
+                      setPaymentProvider(
+                        event.target.value
+                      )
+                    }
+                    placeholder="PayPal / Bank / Mobile Money"
+                  />
+                </div>
+
+                <div>
+                  <label>
+                    Payment method
+                  </label>
+
+                  <input
+                    type="text"
+                    value={paymentMethod}
+                    onChange={(event) =>
+                      setPaymentMethod(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Transfer / Wallet / Card"
+                  />
+                </div>
+              </div>
+
+              <label>
+                Payment reference
+              </label>
+
+              <input
+                type="text"
+                value={paymentReference}
+                onChange={(event) =>
+                  setPaymentReference(
+                    event.target.value
+                  )
+                }
+                placeholder="Transaction/reference number"
+              />
+
+              <label>
+                Payment evidence
+              </label>
+
+              <textarea
+                value={paymentEvidence}
+                onChange={(event) =>
+                  setPaymentEvidence(
+                    event.target.value
+                  )
+                }
+                placeholder="Describe the evidence or provide a permitted reference/link"
+                rows={4}
+              />
+
+              <button
+                className="primary-button"
+                onClick={markPaid}
+                disabled={!!actionLoading}
+              >
+                {actionLoading === "paid"
+                  ? "Saving Payment..."
+                  : "Confirm Payment Received"}
+              </button>
+            </div>
+          )}
+
           <div className="task-actions-card">
             <div className="section-label">
               ACTIONS
@@ -885,9 +1381,7 @@ export default function TaskDashboard() {
               <button
                 className="secondary-button"
                 onClick={refreshTask}
-                disabled={
-                  !!actionLoading
-                }
+                disabled={!!actionLoading}
               >
                 {actionLoading === "refresh"
                   ? "Refreshing..."
@@ -898,9 +1392,7 @@ export default function TaskDashboard() {
                 <button
                   className="primary-button"
                   onClick={runTask}
-                  disabled={
-                    !!actionLoading
-                  }
+                  disabled={!!actionLoading}
                 >
                   {actionLoading === "run"
                     ? "Running..."
@@ -912,9 +1404,7 @@ export default function TaskDashboard() {
                 <button
                   className="primary-button"
                   onClick={approveTask}
-                  disabled={
-                    !!actionLoading
-                  }
+                  disabled={!!actionLoading}
                 >
                   {actionLoading === "approve"
                     ? "Approving..."
@@ -927,12 +1417,18 @@ export default function TaskDashboard() {
                   className="primary-button"
                   onClick={submitTask}
                   disabled={
-                    !!actionLoading
+                    !!actionLoading ||
+                    !officialUrl
+                  }
+                  title={
+                    !officialUrl
+                      ? "A valid official URL is required."
+                      : "Confirm your manual submission."
                   }
                 >
                   {actionLoading === "submit"
-                    ? "Submitting..."
-                    : "Mark Submitted"}
+                    ? "Saving Submission..."
+                    : "Confirm Manual Submission"}
                 </button>
               )}
 
@@ -940,27 +1436,11 @@ export default function TaskDashboard() {
                 <button
                   className="primary-button"
                   onClick={completeTask}
-                  disabled={
-                    !!actionLoading
-                  }
+                  disabled={!!actionLoading}
                 >
                   {actionLoading === "complete"
-                    ? "Completing..."
-                    : "Mark Completed"}
-                </button>
-              )}
-
-              {status === "COMPLETED" && (
-                <button
-                  className="primary-button"
-                  onClick={markPaid}
-                  disabled={
-                    !!actionLoading
-                  }
-                >
-                  {actionLoading === "paid"
                     ? "Saving..."
-                    : "Record Paid"}
+                    : "Confirm Completion"}
                 </button>
               )}
             </div>
@@ -978,6 +1458,37 @@ export default function TaskDashboard() {
                 CAPTCHA-protected actions, authentication
                 steps, and platform-restricted actions
                 are not bypassed automatically.
+              </p>
+            </div>
+          )}
+
+          {status === "APPROVED" && (
+            <div className="review-warning">
+              <strong>
+                Manual submission required
+              </strong>
+
+              <p>
+                OpportunityAI will not submit applications
+                or work on your behalf. Open the official
+                platform, review the prepared material,
+                submit it yourself, then confirm the
+                submission above.
+              </p>
+            </div>
+          )}
+
+          {status === "COMPLETED" && (
+            <div className="payment-warning">
+              <strong>
+                Payment has NOT been assumed.
+              </strong>
+
+              <p>
+                Completion only means the work was
+                confirmed complete. Record payment
+                separately only after you actually
+                receive it.
               </p>
             </div>
           )}
@@ -1015,7 +1526,10 @@ export default function TaskDashboard() {
         .quality-card,
         .task-actions-card,
         .task-list-card,
-        .task-loading-card {
+        .task-loading-card,
+        .official-source-card,
+        .submission-card,
+        .payment-card {
           background: white;
           border: 1px solid #e2e8f0;
           border-radius: 18px;
@@ -1027,7 +1541,9 @@ export default function TaskDashboard() {
           gap: 10px;
         }
 
-        .task-create-card label {
+        .task-create-card label,
+        .submission-card label,
+        .payment-card label {
           margin-top: 8px;
           font-size: 13px;
           font-weight: 700;
@@ -1036,7 +1552,11 @@ export default function TaskDashboard() {
 
         .task-create-card input,
         .task-create-card textarea,
-        .task-create-card select {
+        .task-create-card select,
+        .submission-card input,
+        .submission-card textarea,
+        .payment-card input,
+        .payment-card textarea {
           width: 100%;
           border: 1px solid #cbd5e1;
           border-radius: 10px;
@@ -1047,13 +1567,19 @@ export default function TaskDashboard() {
           outline: none;
         }
 
-        .task-create-card textarea {
+        .task-create-card textarea,
+        .submission-card textarea,
+        .payment-card textarea {
           resize: vertical;
         }
 
         .task-create-card input:focus,
         .task-create-card textarea:focus,
-        .task-create-card select:focus {
+        .task-create-card select:focus,
+        .submission-card input:focus,
+        .submission-card textarea:focus,
+        .payment-card input:focus,
+        .payment-card textarea:focus {
           border-color: #64748b;
         }
 
@@ -1345,7 +1871,87 @@ export default function TaskDashboard() {
           margin-top: 14px;
         }
 
-        .review-warning {
+        .official-source {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 14px;
+          padding: 12px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          font-size: 13px;
+        }
+
+        .official-source span {
+          color: #64748b;
+          font-weight: 700;
+        }
+
+        .official-source a {
+          color: #0f172a;
+          font-weight: 800;
+          text-decoration: none;
+        }
+
+        .official-source-card {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 20px;
+          background: #f8fafc;
+        }
+
+        .official-source-card h3,
+        .submission-card h3,
+        .payment-card h3 {
+          margin: 8px 0;
+        }
+
+        .official-source-card p,
+        .submission-card p,
+        .payment-card p {
+          color: #64748b;
+          line-height: 1.6;
+          margin-bottom: 15px;
+        }
+
+        .official-source-card a,
+        .submission-card > a {
+          text-decoration: none;
+        }
+
+        .submission-card {
+          display: grid;
+          gap: 10px;
+        }
+
+        .payment-card {
+          display: grid;
+          gap: 10px;
+        }
+
+        .payment-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+        }
+
+        .expected-payment {
+          padding: 12px;
+          border-radius: 10px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          color: #475569;
+        }
+
+        .expected-payment strong {
+          color: #0f172a;
+        }
+
+        .review-warning,
+        .payment-warning {
           padding: 16px;
           border-radius: 12px;
           background: #fffbeb;
@@ -1353,7 +1959,8 @@ export default function TaskDashboard() {
           color: #92400e;
         }
 
-        .review-warning p {
+        .review-warning p,
+        .payment-warning p {
           margin: 7px 0 0;
           line-height: 1.6;
           font-size: 13px;
@@ -1361,12 +1968,18 @@ export default function TaskDashboard() {
 
         @media (max-width: 700px) {
           .task-dashboard-header,
-          .task-summary-card {
+          .task-summary-card,
+          .official-source-card {
             flex-direction: column;
+            align-items: stretch;
           }
 
           .task-metrics {
             grid-template-columns: repeat(2, 1fr);
+          }
+
+          .payment-grid {
+            grid-template-columns: 1fr;
           }
 
           .task-lifecycle {
@@ -1384,6 +1997,11 @@ export default function TaskDashboard() {
           .task-list-item {
             align-items: flex-start;
             flex-direction: column;
+          }
+
+          .official-source-card a {
+            width: 100%;
+            text-align: center;
           }
         }
       `}</style>
