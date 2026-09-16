@@ -713,38 +713,35 @@ export async function logTaskActivity(
   metadata = {},
   fromStatus = null
 ) {
-  const client =
-    requireSupabase();
+  const client = requireSupabase();
 
-  const {
-    error
-  } = await client
-    .from(
-      "ai_task_activity"
-    )
+  const { error } = await client
+    .from("ai_task_activity")
     .insert({
-      task_id:
-        task.id,
-
-      owner_id:
-        task.ownerId ||
-        null,
-
-      event_type:
-        event,
-
-      from_status:
-        fromStatus,
-
-      to_status:
-        task.status,
-
+      task_id: task.id,
+      owner_id: task.ownerId || null,
+      event_type: event,
+      from_status: fromStatus,
+      to_status: task.status,
       metadata
     });
 
   if (error) {
-    throw error;
+    // Activity logging must never prevent the main task
+    // from being created, updated, prepared, submitted,
+    // completed, or paid.
+    //
+    // The ai_task_activity table exists in Supabase, but
+    // PostgREST may temporarily have a stale schema cache.
+    console.warn(
+      "[OpportunityAI] Activity log skipped:",
+      error.message
+    );
+
+    return null;
   }
+
+  return true;
 }
 
 // ============================================================
