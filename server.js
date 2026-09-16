@@ -1999,6 +1999,9 @@ app.post(
         context = {},
         userProfile = {},
         opportunityId = null,
+        source = "manual",
+        type = "general",
+        ownerId = null,
         metadata = {}
       } = req.body || {};
 
@@ -2013,6 +2016,68 @@ app.post(
             "Task title or description is required."
         });
       }
+
+      const task =
+        createTask({
+          title:
+            title ||
+            "Untitled Task",
+
+          description:
+            description ||
+            "",
+
+          type,
+
+          source,
+
+          ownerId,
+
+          metadata: {
+            ...metadata,
+
+            requirements,
+
+            context,
+
+            userProfile,
+
+            opportunityId
+          }
+        });
+
+      taskStore.set(
+        task.id,
+        task
+      );
+
+      return res.status(201).json({
+        success: true,
+
+        message:
+          "AI task created successfully.",
+
+        task
+      });
+
+    } catch (error) {
+      console.error(
+        "Create AI task error:",
+        error.message
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Could not create AI task.",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
 
       const task =
         createTask({
