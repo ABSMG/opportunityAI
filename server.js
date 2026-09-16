@@ -186,6 +186,142 @@ function normalizeOpportunityForDatabase(
 }
 
 // =====================================
+// AI TASK RESPONSE HELPER
+// =====================================
+//
+// IMPORTANT:
+// TaskDashboard needs the complete task
+// object, not only the summary returned by
+// getTaskStatus().
+//
+// We keep getTaskStatus() for compatibility,
+// then merge it with the complete task.
+//
+
+function serializeTask(task) {
+  if (!task) {
+    return null;
+  }
+
+  const summary =
+    getTaskStatus(task) || {};
+
+  return {
+    ...task,
+
+    ...summary,
+
+    id:
+      task.id ??
+      summary.id,
+
+    title:
+      task.title ??
+      summary.title,
+
+    description:
+      task.description ??
+      summary.description,
+
+    type:
+      task.type ??
+      summary.type,
+
+    source:
+      task.source ??
+      summary.source,
+
+    ownerId:
+      task.ownerId ??
+      summary.ownerId ??
+      null,
+
+    status:
+      task.status ??
+      summary.status,
+
+    automationPercentage:
+      task.automationPercentage ??
+      summary.automationPercentage ??
+      0,
+
+    plan:
+      Array.isArray(task.plan)
+        ? task.plan
+        : [],
+
+    steps:
+      Array.isArray(task.steps)
+        ? task.steps
+        : [],
+
+    outputs:
+      Array.isArray(task.outputs)
+        ? task.outputs
+        : [],
+
+    qualityCheck:
+      task.qualityCheck ??
+      summary.qualityCheck ??
+      null,
+
+    metadata:
+      task.metadata ??
+      {},
+
+    createdAt:
+      task.createdAt ??
+      summary.createdAt ??
+      null,
+
+    startedAt:
+      task.startedAt ??
+      summary.startedAt ??
+      null,
+
+    approvedAt:
+      task.approvedAt ??
+      summary.approvedAt ??
+      null,
+
+    submittedAt:
+      task.submittedAt ??
+      summary.submittedAt ??
+      null,
+
+    completedAt:
+      task.completedAt ??
+      summary.completedAt ??
+      null,
+
+    paidAt:
+      task.paidAt ??
+      summary.paidAt ??
+      null,
+
+    approvedBy:
+      task.approvedBy ??
+      null,
+
+    submission:
+      task.submission ??
+      null,
+
+    completion:
+      task.completion ??
+      null,
+
+    payment:
+      task.payment ??
+      null,
+
+    error:
+      task.error ??
+      null
+  };
+}
+
+// =====================================
 // API HEALTH
 // =====================================
 
@@ -1938,7 +2074,8 @@ app.post(
         message:
           "AI task created successfully.",
 
-        task
+        task:
+          serializeTask(task)
       });
 
     } catch (error) {
@@ -1984,11 +2121,15 @@ app.get(
         });
       }
 
+      // Return the COMPLETE task.
+      // TaskDashboard depends on steps,
+      // plan, outputs, qualityCheck and
+      // lifecycle information.
       return res.json({
         success: true,
 
         task:
-          getTaskStatus(task)
+          serializeTask(task)
       });
 
     } catch (error) {
@@ -2053,8 +2194,10 @@ app.post(
         `AI Task Engine: planning task ${id}...`
       );
 
-      const planningContext =
-        task.metadata || {};
+      const planningContext = {
+        ...(task.metadata || {}),
+        ...(req.body?.context || {})
+      };
 
       const plannedTask =
         await planTask(
@@ -2088,7 +2231,7 @@ app.post(
           "AI task planned and executed.",
 
         task:
-          getTaskStatus(
+          serializeTask(
             executedTask
           )
       });
@@ -2131,7 +2274,16 @@ app.post(
           "AI task execution failed.",
 
         error:
-          error.message
+          error.message,
+
+        task:
+          task
+            ? serializeTask(
+                taskStore.get(
+                  req.params.id
+                )
+              )
+            : null
       });
     }
   }
@@ -2179,7 +2331,7 @@ app.post(
           "AI task approved successfully.",
 
         task:
-          getTaskStatus(
+          serializeTask(
             approvedTask
           )
       });
@@ -2242,7 +2394,7 @@ app.post(
           "Task marked as submitted.",
 
         task:
-          getTaskStatus(
+          serializeTask(
             submittedTask
           )
       });
@@ -2305,7 +2457,7 @@ app.post(
           "Task marked as completed.",
 
         task:
-          getTaskStatus(
+          serializeTask(
             completedTask
           )
       });
@@ -2368,7 +2520,7 @@ app.post(
           "Task marked as paid.",
 
         task:
-          getTaskStatus(
+          serializeTask(
             paidTask
           )
       });
