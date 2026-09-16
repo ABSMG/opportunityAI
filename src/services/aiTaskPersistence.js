@@ -35,6 +35,81 @@ function requireSupabase() {
 }
 
 // ============================================================
+// NORMALIZE TASK STEPS
+// ============================================================
+
+function normalizeTaskSteps(
+  steps = []
+) {
+  if (!Array.isArray(steps)) {
+    return [];
+  }
+
+  return steps
+    .sort(
+      (a, b) =>
+        Number(a.step_order || a.order || 0) -
+        Number(b.step_order || b.order || 0)
+    )
+    .map(
+      (step, index) => ({
+        id:
+          step.id ||
+          `step_${
+            Number(
+              step.step_order ||
+              step.order
+            ) ||
+            index + 1
+          }`,
+
+        order:
+          Number(
+            step.step_order ||
+            step.order
+          ) ||
+          index + 1,
+
+        title:
+          step.title ||
+          "",
+
+        description:
+          step.description ||
+          "",
+
+        action:
+          step.action ||
+          "REVIEW",
+
+        automation:
+          Number(
+            step.automation
+          ) ||
+          0,
+
+        requiresHuman:
+          Boolean(
+            step.requires_human ??
+            step.requiresHuman
+          ),
+
+        status:
+          step.status ||
+          "PENDING",
+
+        output:
+          step.output ||
+          null,
+
+        error:
+          step.error ||
+          null
+      })
+    );
+}
+
+// ============================================================
 // SAVE TASK
 // ============================================================
 
@@ -138,22 +213,6 @@ export async function saveTaskToSupabase(
   // ==========================================================
   // SCHEMA CACHE FALLBACK
   // ==========================================================
-  //
-  // PostgREST can temporarily report a real database column
-  // as missing from its schema cache.
-  //
-  // Instead of removing a particular field permanently, detect
-  // the field named in the error and retry without only that
-  // field. All other task fields remain unchanged.
-  //
-  // This handles errors such as:
-  //
-  // Could not find the 'approved_by' column of 'ai_tasks'
-  // in the schema cache
-  //
-  // Could not find the 'completion' column of 'ai_tasks'
-  // in the schema cache
-  // ==========================================================
 
   const omittedFields =
     new Set();
@@ -195,18 +254,8 @@ export async function saveTaskToSupabase(
       fieldMatch?.[1];
 
     if (
-      !missingField
-    ) {
-      break;
-    }
-
-    if (
-      !(missingField in payload)
-    ) {
-      break;
-    }
-
-    if (
+      !missingField ||
+      !(missingField in payload) ||
       omittedFields.has(
         missingField
       )
@@ -260,11 +309,18 @@ export async function saveTaskStepsToSupabase(
   const client =
     requireSupabase();
 
-  if (
-    !Array.isArray(
+  const steps =
+    normalizeTaskSteps(
       task.steps
-    )
-  ) {
+    );
+
+  // ----------------------------------------------------------
+  // If no steps exist, do not delete existing database steps.
+  // This prevents an incomplete task object from accidentally
+  // destroying a previously generated execution plan.
+  // ----------------------------------------------------------
+
+  if (!steps.length) {
     return [];
   }
 
@@ -291,17 +347,26 @@ export async function saveTaskStepsToSupabase(
     );
 
   if (deleteError) {
+    const isSchemaCacheError =
+      deleteError.code ===
+        "PGRST204" ||
+      deleteError.code ===
+        "PGRST205";
+
+    if (isSchemaCacheError) {
+      console.warn(
+        "[OpportunityAI] Could not refresh ai_task_steps cache during delete:",
+        deleteError.message
+      );
+
+      return [];
+    }
+
     throw deleteError;
   }
 
-  if (
-    !task.steps.length
-  ) {
-    return [];
-  }
-
   const rows =
-    task.steps.map(
+    steps.map(
       (step, index) => ({
         task_id:
           task.id,
@@ -373,16 +438,37 @@ export async function saveTaskStepsToSupabase(
 export async function persistTask(
   task
 ) {
+  if (!task) {
+    throw new Error(
+      "Task is required."
+    );
+  }
+
   const savedTask =
     await saveTaskToSupabase(
       task
     );
 
+  /*
+   * Steps are stored separately because
+   * ai_tasks does not contain the execution
+   * step array.
+   *
+   * This is especially important after
+   * planTask() creates the execution plan.
+   */
   await saveTaskStepsToSupabase(
     task
   );
 
-  return savedTask;
+  return {
+    ...savedTask,
+
+    steps:
+      normalizeTaskSteps(
+        task.steps
+      )
+  };
 }
 
 // ============================================================
@@ -418,6 +504,11 @@ export async function getTaskFromSupabase(
     return null;
   }
 
+  const steps =
+    normalizeTaskSteps(
+      data.ai_task_steps || []
+    );
+
   return {
     id:
       data.id,
@@ -449,46 +540,7 @@ export async function getTaskFromSupabase(
     plan:
       data.plan,
 
-    steps:
-      (data.ai_task_steps || [])
-        .sort(
-          (a, b) =>
-            a.step_order -
-            b.step_order
-        )
-        .map(
-          (step) => ({
-            id:
-              `step_${step.step_order}`,
-
-            order:
-              step.step_order,
-
-            title:
-              step.title,
-
-            description:
-              step.description,
-
-            action:
-              step.action,
-
-            automation:
-              step.automation,
-
-            requiresHuman:
-              step.requires_human,
-
-            status:
-              step.status,
-
-            output:
-              step.output,
-
-            error:
-              step.error
-          })
-        ),
+    steps,
 
     outputs:
       data.outputs ||
@@ -613,48 +665,10 @@ export async function listTasksFromSupabase(
         dataTask.plan,
 
       steps:
-        (
+        normalizeTaskSteps(
           dataTask.ai_task_steps ||
           []
-        )
-          .sort(
-            (a, b) =>
-              a.step_order -
-              b.step_order
-          )
-          .map(
-            (step) => ({
-              id:
-                `step_${step.step_order}`,
-
-              order:
-                step.step_order,
-
-              title:
-                step.title,
-
-              description:
-                step.description,
-
-              action:
-                step.action,
-
-              automation:
-                step.automation,
-
-              requiresHuman:
-                step.requires_human,
-
-              status:
-                step.status,
-
-              output:
-                step.output,
-
-              error:
-                step.error
-            })
-          ),
+        ),
 
       outputs:
         dataTask.outputs ||
@@ -713,26 +727,40 @@ export async function logTaskActivity(
   metadata = {},
   fromStatus = null
 ) {
-  const client = requireSupabase();
+  const client =
+    requireSupabase();
 
-  const { error } = await client
-    .from("ai_task_activity")
+  const {
+    error
+  } = await client
+    .from(
+      "ai_task_activity"
+    )
     .insert({
-      task_id: task.id,
-      owner_id: task.ownerId || null,
-      event_type: event,
-      from_status: fromStatus,
-      to_status: task.status,
+      task_id:
+        task.id,
+
+      owner_id:
+        task.ownerId ||
+        null,
+
+      event_type:
+        event,
+
+      from_status:
+        fromStatus,
+
+      to_status:
+        task.status,
+
       metadata
     });
 
   if (error) {
-    // Activity logging must never prevent the main task
-    // from being created, updated, prepared, submitted,
-    // completed, or paid.
-    //
-    // The ai_task_activity table exists in Supabase, but
-    // PostgREST may temporarily have a stale schema cache.
+    /*
+     * Activity logging must never prevent
+     * the main task from continuing.
+     */
     console.warn(
       "[OpportunityAI] Activity log skipped:",
       error.message
