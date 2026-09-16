@@ -122,12 +122,12 @@ export async function saveTaskToSupabase(
   /*
    * ai_tasks.created_at is NOT NULL.
    *
-   * If the task already has createdAt, preserve it.
-   * Otherwise generate a new timestamp instead of
-   * sending null to Supabase.
+   * Preserve the existing createdAt timestamp
+   * when available. Otherwise generate one.
    */
   const createdAt =
     task.createdAt ||
+    task.created_at ||
     new Date().toISOString();
 
   const taskData = {
@@ -175,8 +175,7 @@ export async function saveTaskToSupabase(
 
     /*
      * FIX:
-     * Never send null to the NOT NULL
-     * ai_tasks.created_at column.
+     * Never send null to ai_tasks.created_at.
      */
     created_at:
       createdAt,
@@ -461,14 +460,15 @@ export async function persistTask(
   }
 
   /*
-   * Ensure createdAt exists on the in-memory
-   * task as well as in the database.
+   * Make sure the in-memory task also has
+   * a createdAt value before saving.
    */
   const normalizedTask = {
     ...task,
 
     createdAt:
       task.createdAt ||
+      task.created_at ||
       new Date().toISOString()
   };
 
@@ -491,6 +491,13 @@ export async function persistTask(
 
   return {
     ...savedTask,
+
+    /*
+     * Return the generated timestamp to the
+     * application as well.
+     */
+    createdAt:
+      savedTask.created_at,
 
     steps:
       normalizeTaskSteps(
