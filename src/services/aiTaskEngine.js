@@ -576,15 +576,26 @@ async function executeGenerateStep(
 ) {
   const ai = getAI();
 
+  /*
+   * IMPORTANT:
+   * Missing Gemini API key must NOT crash
+   * the whole task.
+   */
   if (!ai) {
     return {
       type:
         "generation",
 
+      content:
+        "",
+
       message:
         "AI generation is unavailable because GEMINI_API_KEY is not configured.",
 
       requiresReview:
+        true,
+
+      fallback:
         true
     };
   }
@@ -610,25 +621,95 @@ Rules:
 - Return a concise useful result.
 `;
 
-  const response =
-    await ai.models.generateContent({
-      model:
-        "gemini-2.5-flash",
+  /*
+   * IMPORTANT:
+   * Gemini errors are handled here.
+   * They should not automatically make the
+   * entire task FAILED.
+   */
+  try {
+    const response =
+      await ai.models.generateContent({
+        model:
+          "gemini-2.5-flash",
 
-      contents:
-        prompt
-    });
+        contents:
+          prompt
+      });
 
-  return {
-    type:
-      "generation",
+    const content =
+      response.text ||
+      response.candidates?.[0]
+        ?.content?.parts?.[0]
+        ?.text ||
+      "";
 
-    content:
-      response.text || "",
+    /*
+     * Empty AI response is treated as
+     * review-required instead of task failure.
+     */
+    if (!content.trim()) {
+      return {
+        type:
+          "generation",
 
-    requiresReview:
-      true
-  };
+        content:
+          "",
+
+        message:
+          "AI returned an empty response. Manual review is required.",
+
+        requiresReview:
+          true,
+
+        fallback:
+          true
+      };
+    }
+
+    return {
+      type:
+        "generation",
+
+      content:
+        content.trim(),
+
+      requiresReview:
+        true
+    };
+
+  } catch (error) {
+    console.error(
+      "AI generation step failed:",
+      error.message
+    );
+
+    /*
+     * Do not throw here.
+     *
+     * The task can continue to QUALITY_CHECK
+     * and finally become READY_FOR_REVIEW.
+     */
+    return {
+      type:
+        "generation",
+
+      content:
+        "",
+
+      message:
+        "AI generation could not be completed automatically.",
+
+      error:
+        error.message,
+
+      requiresReview:
+        true,
+
+      fallback:
+        true
+    };
+  }
 }
 
 // ============================================================
@@ -742,6 +823,7 @@ Rules:
       requiresReview:
         !Boolean(result.passed)
     };
+
   } catch (error) {
     return {
       passed:
@@ -957,7 +1039,13 @@ export async function executeTask(
 
         output
       });
+
     } catch (error) {
+      /*
+       * Unexpected execution errors still
+       * fail the task. Expected AI generation
+       * errors are handled inside the step.
+       */
       step.status =
         TASK_STEP_STATUS.FAILED;
 
