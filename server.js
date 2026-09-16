@@ -1,7 +1,6 @@
 import "dotenv/config";
 
 import { randomUUID } from "crypto";
-
 import { prepareOpportunity } from "./src/services/preparationService.js";
 
 import express from "express";
@@ -94,15 +93,8 @@ const supabase =
     : null;
 
 // =====================================
-// IN-MEMORY AI TASK STORE
+// RUNTIME CACHE
 // =====================================
-//
-// Kept for compatibility and temporary
-// runtime access.
-//
-// Supabase is now the persistent source
-// of truth for AI tasks.
-//
 
 const taskStore =
   new Map();
@@ -136,10 +128,26 @@ function ensureTaskUuid(task) {
 
   return {
     ...task,
-
-    id:
-      randomUUID()
+    id: randomUUID()
   };
+}
+
+function isOfficialHttpUrl(value) {
+  try {
+    const url =
+      new URL(
+        String(
+          value || ""
+        )
+      );
+
+    return (
+      url.protocol === "http:" ||
+      url.protocol === "https:"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeOpportunityForDatabase(
@@ -222,17 +230,8 @@ function normalizeOpportunityForDatabase(
 }
 
 // =====================================
-// AI TASK RESPONSE HELPER
+// TASK SERIALIZER
 // =====================================
-//
-// IMPORTANT:
-// TaskDashboard needs the complete task
-// object, not only the summary returned by
-// getTaskStatus().
-//
-// We keep getTaskStatus() for compatibility,
-// then merge it with the complete task.
-//
 
 function serializeTask(task) {
   if (!task) {
@@ -241,6 +240,9 @@ function serializeTask(task) {
 
   const summary =
     getTaskStatus(task) || {};
+
+  const metadata =
+    task.metadata || {};
 
   return {
     ...task,
@@ -301,9 +303,24 @@ function serializeTask(task) {
       summary.qualityCheck ??
       null,
 
-    metadata:
-      task.metadata ??
-      {},
+    metadata,
+
+    officialUrl:
+      task.officialUrl ||
+      metadata.officialUrl ||
+      metadata.official_url ||
+      null,
+
+    officialSite:
+      task.officialSite ||
+      metadata.officialSite ||
+      metadata.platform ||
+      null,
+
+    opportunityId:
+      task.opportunityId ||
+      metadata.opportunityId ||
+      null,
 
     createdAt:
       task.createdAt ??
@@ -357,8 +374,308 @@ function serializeTask(task) {
   };
 }
 
+function getTaskOfficialUrl(task) {
+  return (
+    task?.officialUrl ||
+    task?.metadata?.officialUrl ||
+    task?.metadata?.official_url ||
+    task?.metadata?.opportunityUrl ||
+    null
+  );
+}
+
+function isExternalTask(task) {
+  return (
+    String(
+      task?.source || ""
+    ).toLowerCase() !==
+    "internal"
+  );
+}
+
+function requireUserConfirmation(
+  body,
+  message
+) {
+  if (
+    body?.confirmedByUser !==
+    true
+  ) {
+    const error =
+      new Error(message);
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+}
+
 // =====================================
-// API HEALTH
+// LOAD OPPORTUNITY
+// =====================================
+
+async function loadOpportunityById(
+  id
+) {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
+
+  if (
+    isValidUuid(id)
+  ) {
+    const {
+      data,
+      error
+    } = await supabase
+      .from("opportunities")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("opportunities")
+    .select("*")
+    .eq(
+      "source_external_id",
+      id
+    )
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+// =====================================
+// LOAD TASK
+// =====================================
+
+async function loadTask(id) {
+  let task =
+    null;
+
+  if (
+    supabase &&
+    isValidUuid(id)
+  ) {
+    task =
+      await getTaskFromSupabase(
+        id
+      );
+  }
+
+  if (!task) {
+    task =
+      taskStore.get(id);
+  }
+
+  return task;
+}
+
+// =====================================
+// SAFE SUBMISSION PERSISTENCE
+// =====================================
+
+async function persistSubmissionSafely(
+  task,
+  submission
+) {
+  try {
+    return await saveTaskSubmission(
+      task,
+      submission
+    );
+  } catch (error) {
+    /*
+     * PostgREST may temporarily have an
+     * old schema cache.
+     *
+     * confirmed_by_user has a database
+     * default, so retry without explicitly
+     * sending that column.
+     */
+
+    if (
+      !/confirmed_by_user/i.test(
+        error?.message || ""
+      )
+    ) {
+      throw error;
+    }
+
+    const fallback = {
+      ...submission
+    };
+
+    delete fallback.confirmedByUser;
+    delete fallback.confirmed_by_user;
+
+    if (!supabase) {
+      throw error;
+    }
+
+    const {
+      data,
+      error:
+        fallbackError
+    } = await supabase
+      .from(
+        "ai_task_submissions"
+      )
+      .insert({
+        task_id:
+          task.id,
+
+        owner_id:
+          task.ownerId ||
+          null,
+
+        official_url:
+          fallback.officialUrl ||
+          fallback.official_url ||
+          null,
+
+        method:
+          fallback.method ||
+          "manual",
+
+        reference:
+          fallback.reference ||
+          null,
+
+        notes:
+          fallback.notes ||
+          null,
+
+        submitted_at:
+          fallback.submittedAt ||
+          new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (fallbackError) {
+      throw fallbackError;
+    }
+
+    return data;
+  }
+}
+
+// =====================================
+// SAFE PAYMENT PERSISTENCE
+// =====================================
+
+async function persistPaymentSafely(
+  task,
+  payment
+) {
+  try {
+    return await saveTaskPayment(
+      task,
+      payment
+    );
+  } catch (error) {
+    if (
+      !/confirmed_by_user/i.test(
+        error?.message || ""
+      )
+    ) {
+      throw error;
+    }
+
+    const fallback = {
+      ...payment
+    };
+
+    delete fallback.confirmedByUser;
+    delete fallback.confirmed_by_user;
+
+    if (!supabase) {
+      throw error;
+    }
+
+    const {
+      data,
+      error:
+        fallbackError
+    } = await supabase
+      .from(
+        "ai_task_payments"
+      )
+      .insert({
+        task_id:
+          task.id,
+
+        amount:
+          fallback.amount,
+
+        currency:
+          fallback.currency,
+
+        payment_method:
+          fallback.paymentMethod ||
+          fallback.payment_method ||
+          null,
+
+        provider:
+          fallback.provider ||
+          null,
+
+        provider_reference:
+          fallback.providerReference ||
+          fallback.provider_reference ||
+          null,
+
+        status:
+          "PAID",
+
+        expected_at:
+          fallback.expectedAt ||
+          fallback.expected_at ||
+          null,
+
+        paid_at:
+          fallback.paidAt ||
+          fallback.paid_at ||
+          new Date().toISOString(),
+
+        evidence:
+          fallback.evidence ||
+          null,
+
+        notes:
+          fallback.notes ||
+          null
+      })
+      .select()
+      .single();
+
+    if (fallbackError) {
+      throw fallbackError;
+    }
+
+    return data;
+  }
+}
+
+// =====================================
+// HEALTH
 // =====================================
 
 app.get(
@@ -382,7 +699,10 @@ app.get(
         ),
 
       taskEngine:
-        true
+        true,
+
+      workflow:
+        "real-opportunity-human-submission-verified-payment"
     });
   }
 );
@@ -401,28 +721,23 @@ app.get(
         "OpportunityAI API",
 
       version:
-        "1.0.0",
+        "2.0.0",
 
       capabilities: [
-        "opportunity-discovery",
+        "real-opportunity-discovery",
+        "official-source-links",
         "ai-analysis",
         "opportunity-matching",
         "opportunity-ranking",
         "opportunity-preparation",
-        "application-review",
-        "application-approval",
-        "application-tracking",
+        "human-reviewed-submission",
+        "submission-evidence",
+        "completion-tracking",
+        "verified-payment-tracking",
         "supabase-storage",
-        "automation-runs",
-
         "ai-task-planning",
         "ai-task-execution",
-        "ai-task-quality-check",
-        "ai-task-review",
-        "ai-task-approval",
-        "ai-task-submission-tracking",
-        "ai-task-completion-tracking",
-        "ai-task-payment-tracking"
+        "ai-task-quality-check"
       ]
     });
   }
@@ -477,9 +792,15 @@ app.get(
           data?.length || 0,
 
         opportunities:
-          data || []
+          (
+            data || []
+          ).filter(
+            (item) =>
+              isOfficialHttpUrl(
+                item.url
+              )
+          )
       });
-
     } catch (error) {
       console.error(
         "Get opportunities error:",
@@ -512,10 +833,9 @@ app.post(
       }
 
       const opportunity =
-        req.body;
+        req.body || {};
 
       if (
-        !opportunity ||
         !opportunity.title
       ) {
         return res.status(400).json({
@@ -525,74 +845,27 @@ app.post(
         });
       }
 
-      const allowedFields = {
-        owner_id:
-          opportunity.owner_id ||
-          null,
+      if (
+        !isOfficialHttpUrl(
+          opportunity.url
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A real HTTP/HTTPS official opportunity URL is required. Demo or empty links are not accepted."
+        });
+      }
 
-        type:
-          opportunity.type ||
-          "remote_job",
-
-        title:
-          opportunity.title,
-
-        description:
-          opportunity.description ||
-          "",
-
-        company:
-          opportunity.company ||
-          "",
-
-        url:
-          opportunity.url ||
-          "",
-
-        payment:
-          opportunity.payment ??
-          null,
-
-        currency:
-          opportunity.currency ||
-          "",
-
-        remote:
-          opportunity.remote ??
-          true,
-
-        skills:
-          opportunity.skills ||
-          "",
-
-        deadline:
-          opportunity.deadline ||
-          null,
-
-        source:
-          opportunity.source ||
-          "manual",
-
-        source_external_id:
-          opportunity.source_external_id ||
-          null,
-
-        match_score:
-          opportunity.match_score ??
-          null,
-
-        opportunity_score:
-          opportunity.opportunity_score ??
-          null,
-
-        ai_analysis:
-          opportunity.ai_analysis ||
-          null,
-
-        status:
-          opportunity.status ||
-          "NEW"
-      };
+      const allowedFields =
+        normalizeOpportunityForDatabase(
+          opportunity,
+          {
+            ownerId:
+              opportunity.owner_id ||
+              opportunity.ownerId
+          }
+        );
 
       const {
         data,
@@ -614,13 +887,73 @@ app.post(
         opportunity:
           data
       });
-
     } catch (error) {
       console.error(
         "Create opportunity error:",
         error.message
       );
 
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
+// OFFICIAL OPPORTUNITY LINK
+// =====================================
+
+app.get(
+  "/api/opportunities/:id/official-link",
+  async (req, res) => {
+    try {
+      const opportunity =
+        await loadOpportunityById(
+          req.params.id
+        );
+
+      if (!opportunity) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Opportunity not found."
+        });
+      }
+
+      if (
+        !isOfficialHttpUrl(
+          opportunity.url
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This opportunity does not have a valid official URL and cannot be submitted."
+        });
+      }
+
+      return res.json({
+        success: true,
+
+        opportunityId:
+          opportunity.id,
+
+        title:
+          opportunity.title,
+
+        source:
+          opportunity.source,
+
+        company:
+          opportunity.company,
+
+        officialUrl:
+          opportunity.url
+      });
+    } catch (error) {
       return res.status(500).json({
         success: false,
         message:
@@ -646,63 +979,10 @@ app.post(
         });
       }
 
-      const {
-        id
-      } = req.params;
-
-      const {
-        userProfile = {}
-      } = req.body || {};
-
-      let opportunity =
-        null;
-
-      let findError =
-        null;
-
-      if (
-        isValidUuid(id)
-      ) {
-        const result =
-          await supabase
-            .from(
-              "opportunities"
-            )
-            .select("*")
-            .eq(
-              "id",
-              id
-            )
-            .maybeSingle();
-
-        opportunity =
-          result.data;
-
-        findError =
-          result.error;
-      } else {
-        const result =
-          await supabase
-            .from(
-              "opportunities"
-            )
-            .select("*")
-            .eq(
-              "source_external_id",
-              id
-            )
-            .maybeSingle();
-
-        opportunity =
-          result.data;
-
-        findError =
-          result.error;
-      }
-
-      if (findError) {
-        throw findError;
-      }
+      const opportunity =
+        await loadOpportunityById(
+          req.params.id
+        );
 
       if (!opportunity) {
         return res.status(404).json({
@@ -711,6 +991,22 @@ app.post(
             "Opportunity not found."
         });
       }
+
+      if (
+        !isOfficialHttpUrl(
+          opportunity.url
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This opportunity has no valid official URL. It cannot enter the real submission workflow."
+        });
+      }
+
+      const userProfile =
+        req.body?.userProfile ||
+        {};
 
       const preparation =
         await prepareOpportunity(
@@ -738,6 +1034,7 @@ app.post(
         const notes =
           JSON.stringify({
             preparation,
+
             preparedAt:
               new Date().toISOString()
           });
@@ -773,10 +1070,8 @@ app.post(
           existingApplication
         ) {
           const {
-            data:
-              updatedApplication,
-            error:
-              updateError
+            data,
+            error
           } = await supabase
             .from(
               "applications"
@@ -803,19 +1098,16 @@ app.post(
             .select()
             .single();
 
-          if (updateError) {
-            throw updateError;
+          if (error) {
+            throw error;
           }
 
           savedPreparation =
-            updatedApplication;
-
+            data;
         } else {
           const {
-            data:
-              createdApplication,
-            error:
-              createError
+            data,
+            error
           } = await supabase
             .from(
               "applications"
@@ -842,145 +1134,12 @@ app.post(
             .select()
             .single();
 
-          if (createError) {
-            throw createError;
+          if (error) {
+            throw error;
           }
 
           savedPreparation =
-            createdApplication;
-        }
-      }
-
-      if (
-        opportunity.type ===
-        "customer"
-      ) {
-        const packageData =
-          preparation.package ||
-          {};
-
-        const outreach =
-          packageData.outreach ||
-          {};
-
-        const message =
-          outreach.message ||
-          {};
-
-        const {
-          data:
-            existingMessage,
-          error:
-            existingMessageError
-        } = await supabase
-          .from(
-            "outreach_messages"
-          )
-          .select("*")
-          .eq(
-            "opportunity_id",
-            opportunity.id
-          )
-          .order(
-            "created_at",
-            {
-              ascending: false
-            }
-          )
-          .limit(1)
-          .maybeSingle();
-
-        if (
-          existingMessageError
-        ) {
-          throw existingMessageError;
-        }
-
-        const outreachData = {
-          owner_id:
-            userProfile.ownerId ||
-            null,
-
-          opportunity_id:
-            opportunity.id,
-
-          channel:
-            outreach.channel ||
-            "manual",
-
-          subject:
-            message.subject ||
-            "",
-
-          body:
-            message.body ||
-            "",
-
-          status:
-            "READY_FOR_REVIEW",
-
-          user_approved:
-            false,
-
-          platform_allows_automation:
-            false
-        };
-
-        if (
-          existingMessage
-        ) {
-          const {
-            data:
-              updatedMessage,
-            error:
-              updateMessageError
-          } = await supabase
-            .from(
-              "outreach_messages"
-            )
-            .update(
-              outreachData
-            )
-            .eq(
-              "id",
-              existingMessage.id
-            )
-            .select()
-            .single();
-
-          if (
-            updateMessageError
-          ) {
-            throw updateMessageError;
-          }
-
-          savedPreparation =
-            updatedMessage;
-
-        } else {
-          const {
-            data:
-              createdMessage,
-            error:
-              createMessageError
-          } = await supabase
-            .from(
-              "outreach_messages"
-            )
-            .insert(
-              outreachData
-            )
-            .select()
-            .single();
-
-          if (
-            createMessageError
-          ) {
-            throw createMessageError;
-          }
-
-          savedPreparation =
-            createdMessage;
+            data;
         }
       }
 
@@ -988,7 +1147,7 @@ app.post(
         data:
           updatedOpportunity,
         error:
-          opportunityUpdateError
+          opportunityError
       } = await supabase
         .from(
           "opportunities"
@@ -1007,17 +1166,15 @@ app.post(
         .select()
         .single();
 
-      if (
-        opportunityUpdateError
-      ) {
-        throw opportunityUpdateError;
+      if (opportunityError) {
+        throw opportunityError;
       }
 
       return res.json({
         success: true,
 
         message:
-          "Opportunity prepared successfully and is ready for review.",
+          "Opportunity prepared and ready for human review.",
 
         opportunity:
           updatedOpportunity,
@@ -1026,10 +1183,12 @@ app.post(
 
         savedPreparation,
 
-        nextAction:
-          "Review the prepared application before approval."
-      });
+        officialUrl:
+          opportunity.url,
 
+        nextAction:
+          "Open the official site, review the prepared work, and manually submit it there."
+      });
     } catch (error) {
       console.error(
         "Prepare opportunity error:",
@@ -1050,7 +1209,7 @@ app.post(
 );
 
 // =====================================
-// APPLICATIONS - REVIEW
+// APPLICATIONS
 // =====================================
 
 app.get(
@@ -1108,7 +1267,6 @@ app.get(
         applications:
           data || []
       });
-
     } catch (error) {
       console.error(
         "Get applications error:",
@@ -1124,10 +1282,6 @@ app.get(
   }
 );
 
-// =====================================
-// APPLICATION - GET ONE
-// =====================================
-
 app.get(
   "/api/applications/:id",
   async (req, res) => {
@@ -1140,12 +1294,10 @@ app.get(
         });
       }
 
-      const {
-        id
-      } = req.params;
-
       if (
-        !isValidUuid(id)
+        !isValidUuid(
+          req.params.id
+        )
       ) {
         return res.status(400).json({
           success: false,
@@ -1179,7 +1331,7 @@ app.get(
         `)
         .eq(
           "id",
-          id
+          req.params.id
         )
         .maybeSingle();
 
@@ -1197,17 +1349,10 @@ app.get(
 
       return res.json({
         success: true,
-
         application:
           data
       });
-
     } catch (error) {
-      console.error(
-        "Get application error:",
-        error.message
-      );
-
       return res.status(500).json({
         success: false,
         message:
@@ -1218,7 +1363,7 @@ app.get(
 );
 
 // =====================================
-// APPLICATION - APPROVE
+// APPLICATION APPROVAL
 // =====================================
 
 app.post(
@@ -1233,12 +1378,10 @@ app.post(
         });
       }
 
-      const {
-        id
-      } = req.params;
-
       if (
-        !isValidUuid(id)
+        !isValidUuid(
+          req.params.id
+        )
       ) {
         return res.status(400).json({
           success: false,
@@ -1256,10 +1399,19 @@ app.post(
         .from(
           "applications"
         )
-        .select("*")
+        .select(`
+          *,
+          opportunities (
+            id,
+            title,
+            company,
+            url,
+            status
+          )
+        `)
         .eq(
           "id",
-          id
+          req.params.id
         )
         .maybeSingle();
 
@@ -1290,6 +1442,19 @@ app.post(
         });
       }
 
+      if (
+        !isOfficialHttpUrl(
+          application.opportunities
+            ?.url
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "The application has no valid official submission URL."
+        });
+      }
+
       const {
         data:
           approvedApplication,
@@ -1308,7 +1473,7 @@ app.post(
         })
         .eq(
           "id",
-          id
+          req.params.id
         )
         .select()
         .single();
@@ -1321,28 +1486,21 @@ app.post(
         success: true,
 
         message:
-          "Application approved successfully.",
+          "Application approved for manual submission.",
 
         application:
           approvedApplication,
 
+        officialUrl:
+          application.opportunities.url,
+
         nextAction:
-          "Manually submit the application through the permitted platform, then mark it as APPLIED."
+          "Open the official URL and submit manually."
       });
-
     } catch (error) {
-      console.error(
-        "Approve application error:",
-        error.message
-      );
-
-      return res.status(500).json({
+      return res.status(409).json({
         success: false,
-
         message:
-          "Application approval failed.",
-
-        error:
           error.message
       });
     }
@@ -1350,7 +1508,7 @@ app.post(
 );
 
 // =====================================
-// APPLICATION - MARK AS APPLIED
+// APPLICATION MANUAL SUBMISSION
 // =====================================
 
 app.post(
@@ -1365,12 +1523,10 @@ app.post(
         });
       }
 
-      const {
-        id
-      } = req.params;
-
       if (
-        !isValidUuid(id)
+        !isValidUuid(
+          req.params.id
+        )
       ) {
         return res.status(400).json({
           success: false,
@@ -1378,6 +1534,12 @@ app.post(
             "Invalid application ID."
         });
       }
+
+      requireUserConfirmation(
+        req.body,
+
+        "The application can only be recorded as submitted after the user confirms that they manually submitted it on the official site."
+      );
 
       const {
         data:
@@ -1400,7 +1562,7 @@ app.post(
         `)
         .eq(
           "id",
-          id
+          req.params.id
         )
         .maybeSingle();
 
@@ -1424,18 +1586,34 @@ app.post(
           success: false,
 
           message:
-            "Application must be approved before it can be marked as applied.",
+            "Application must be approved before manual submission.",
 
           currentStatus:
             application.status
         });
       }
 
+      if (
+        !isOfficialHttpUrl(
+          application.opportunities
+            ?.url
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "No valid official submission URL exists."
+        });
+      }
+
+      const now =
+        new Date().toISOString();
+
       const {
         data:
           appliedApplication,
         error:
-          updateApplicationError
+          updateError
       } = await supabase
         .from(
           "applications"
@@ -1445,33 +1623,27 @@ app.post(
             "APPLIED",
 
           applied_at:
-            new Date().toISOString(),
+            req.body?.submittedAt ||
+            now,
 
           updated_at:
-            new Date().toISOString()
+            now
         })
         .eq(
           "id",
-          id
+          req.params.id
         )
         .select()
         .single();
 
-      if (
-        updateApplicationError
-      ) {
-        throw updateApplicationError;
+      if (updateError) {
+        throw updateError;
       }
-
-      let updatedOpportunity =
-        null;
 
       if (
         application.opportunity_id
       ) {
         const {
-          data:
-            opportunityData,
           error:
             opportunityError
         } = await supabase
@@ -1483,54 +1655,44 @@ app.post(
               "APPLIED",
 
             updated_at:
-              new Date().toISOString()
+              now
           })
           .eq(
             "id",
             application.opportunity_id
-          )
-          .select()
-          .single();
+          );
 
-        if (
-          opportunityError
-        ) {
+        if (opportunityError) {
           throw opportunityError;
         }
-
-        updatedOpportunity =
-          opportunityData;
       }
 
       return res.json({
         success: true,
 
         message:
-          "Application marked as APPLIED.",
+          "Manual submission recorded.",
 
         application:
           appliedApplication,
 
-        opportunity:
-          updatedOpportunity,
+        officialUrl:
+          application.opportunities.url,
+
+        submissionReference:
+          req.body?.reference ||
+          null,
 
         nextAction:
-          "Application has been recorded. Continue tracking the application status."
+          "Wait for the provider/platform response."
       });
-
     } catch (error) {
-      console.error(
-        "Mark application applied error:",
-        error.message
-      );
-
-      return res.status(500).json({
+      return res.status(
+        error.statusCode ||
+          409
+      ).json({
         success: false,
-
         message:
-          "Could not mark application as applied.",
-
-        error:
           error.message
       });
     }
@@ -1538,7 +1700,7 @@ app.post(
 );
 
 // =====================================
-// OPPORTUNITY SCANNER
+// REAL OPPORTUNITY SCANNER
 // =====================================
 
 app.post(
@@ -1570,48 +1732,44 @@ app.post(
         req.body || {};
 
       const {
-        data: runData,
-        error: runError
-      } =
-        await supabase
-          .from(
-            "automation_runs"
-          )
-          .insert({
-            owner_id:
-              userProfile.ownerId ||
-              null,
+        data:
+          runData,
+        error:
+          runError
+      } = await supabase
+        .from(
+          "automation_runs"
+        )
+        .insert({
+          owner_id:
+            userProfile.ownerId ||
+            null,
 
-            run_type:
-              "OPPORTUNITY_SCAN",
+          run_type:
+            "OPPORTUNITY_SCAN",
 
-            status:
-              "STARTED",
+          status:
+            "STARTED",
 
-            metadata: {
-              sourceCount:
-                Array.isArray(
-                  sources
-                )
-                  ? sources.length
-                  : 0
-            }
-          })
-          .select()
-          .single();
+          metadata: {
+            sourceCount:
+              Array.isArray(
+                sources
+              )
+                ? sources.length
+                : 0
+          }
+        })
+        .select()
+        .single();
 
       if (runError) {
         throw runError;
       }
 
-      if (runData) {
-        automationRunId =
-          runData.id;
-      }
-
-      console.log(
-        "OpportunityAI scanner: starting discovery..."
-      );
+      automationRunId =
+        runData?.id ||
+        null;
 
       const discovered =
         await collectOpportunities(
@@ -1622,98 +1780,30 @@ app.post(
             : defaultSources
         );
 
-      console.log(
-        `OpportunityAI scanner: discovered ${discovered.length} opportunities.`
-      );
-
-      if (
-        !discovered.length
-      ) {
-        if (
-          automationRunId
-        ) {
-          await supabase
-            .from(
-              "automation_runs"
+      /*
+       * REAL OPPORTUNITY RULE:
+       * no HTTP/HTTPS URL = do not save,
+       * rank or expose as a usable opportunity.
+       */
+      const realOpportunities =
+        discovered.filter(
+          (item) =>
+            isOfficialHttpUrl(
+              item.url
             )
-            .update({
-              status:
-                "COMPLETED",
-
-              items_found:
-                0,
-
-              items_processed:
-                0,
-
-              metadata: {
-                message:
-                  "Scanner completed. No opportunities were found.",
-
-                durationMs:
-                  Date.now() -
-                  startedAt
-              },
-
-              completed_at:
-                new Date().toISOString()
-            })
-            .eq(
-              "id",
-              automationRunId
-            );
-        }
-
-        return res.json({
-          success: true,
-
-          message:
-            "Scanner completed, but no opportunities were found.",
-
-          discovered:
-            0,
-
-          analyzed:
-            0,
-
-          ranked:
-            0,
-
-          saved:
-            0,
-
-          opportunities:
-            [],
-
-          durationMs:
-            Date.now() -
-            startedAt
-        });
-      }
-
-      console.log(
-        `OpportunityAI scanner: analyzing ${discovered.length} opportunities...`
-      );
+        );
 
       const analyzed =
         await analyzeOpportunities(
-          discovered,
+          realOpportunities,
           userProfile
         );
-
-      console.log(
-        `OpportunityAI scanner: analyzed ${analyzed.length} opportunities.`
-      );
 
       const ranked =
         rankOpportunities(
           analyzed,
           userProfile
         );
-
-      console.log(
-        `OpportunityAI scanner: ranked ${ranked.length} opportunities.`
-      );
 
       let saved = [];
 
@@ -1722,159 +1812,91 @@ app.post(
         ranked.length
       ) {
         const rows =
-          ranked.map(
-            (opportunity) =>
-              normalizeOpportunityForDatabase(
-                opportunity,
-                userProfile
-              )
-          );
+          ranked
+            .filter(
+              (item) =>
+                isOfficialHttpUrl(
+                  item.url
+                )
+            )
+            .map(
+              (item) =>
+                normalizeOpportunityForDatabase(
+                  item,
+                  userProfile
+                )
+            );
 
-        const {
-          data: savedData,
-          error: saveError
-        } =
-          await supabase
+        if (rows.length) {
+          const {
+            data,
+            error
+          } = await supabase
             .from(
               "opportunities"
             )
-            .insert(
-              rows
-            )
+            .insert(rows)
             .select();
 
-        if (saveError) {
-          throw saveError;
-        }
-
-        saved =
-          savedData ||
-          [];
-
-        console.log(
-          `OpportunityAI scanner: saved ${saved.length} opportunities.`
-        );
-      }
-
-      const savedByExternalId =
-        new Map();
-
-      for (
-        const savedOpportunity
-        of saved
-      ) {
-        if (
-          savedOpportunity
-            .source_external_id
-        ) {
-          savedByExternalId.set(
-            String(
-              savedOpportunity
-                .source_external_id
-            ),
-            savedOpportunity
-          );
-        }
-      }
-
-      const opportunitiesWithDatabaseIds =
-        ranked.map(
-          (opportunity) => {
-            const savedOpportunity =
-              savedByExternalId.get(
-                String(
-                  opportunity.id ||
-                    opportunity.source_external_id ||
-                    ""
-                )
-              );
-
-            if (
-              savedOpportunity
-            ) {
-              return {
-                ...opportunity,
-
-                id:
-                  savedOpportunity.id,
-
-                databaseId:
-                  savedOpportunity.id,
-
-                source_external_id:
-                  savedOpportunity
-                    .source_external_id,
-
-                status:
-                  savedOpportunity.status
-              };
-            }
-
-            return {
-              ...opportunity,
-
-              databaseId:
-                null
-            };
+          if (error) {
+            throw error;
           }
-        );
+
+          saved =
+            data || [];
+        }
+      }
 
       if (
         automationRunId
       ) {
-        const {
-          error:
-            completeError
-        } =
-          await supabase
-            .from(
-              "automation_runs"
-            )
-            .update({
-              status:
-                "COMPLETED",
+        await supabase
+          .from(
+            "automation_runs"
+          )
+          .update({
+            status:
+              "COMPLETED",
 
-              items_found:
-                discovered.length,
+            items_found:
+              realOpportunities.length,
 
-              items_processed:
-                ranked.length,
+            items_processed:
+              ranked.length,
 
-              metadata: {
-                savedCount:
-                  saved.length,
+            metadata: {
+              savedCount:
+                saved.length,
 
-                durationMs:
-                  Date.now() -
-                  startedAt
-              },
+              discardedWithoutOfficialUrl:
+                discovered.length -
+                realOpportunities.length,
 
-              completed_at:
-                new Date().toISOString()
-            })
-            .eq(
-              "id",
-              automationRunId
-            );
+              durationMs:
+                Date.now() -
+                startedAt
+            },
 
-        if (
-          completeError
-        ) {
-          console.error(
-            "Failed to complete automation run:",
-            completeError.message
+            completed_at:
+              new Date().toISOString()
+          })
+          .eq(
+            "id",
+            automationRunId
           );
-        }
       }
 
       return res.json({
         success: true,
 
         message:
-          "Opportunity scan completed.",
+          "Real opportunity scan completed.",
 
         discovered:
           discovered.length,
+
+        validRealOpportunities:
+          realOpportunities.length,
 
         analyzed:
           analyzed.length,
@@ -1886,13 +1908,17 @@ app.post(
           saved.length,
 
         opportunities:
-          opportunitiesWithDatabaseIds,
+          ranked.filter(
+            (item) =>
+              isOfficialHttpUrl(
+                item.url
+              )
+          ),
 
         durationMs:
           Date.now() -
           startedAt
       });
-
     } catch (error) {
       console.error(
         "Scanner error:",
@@ -1903,57 +1929,34 @@ app.post(
         supabase &&
         automationRunId
       ) {
-        try {
-          const {
-            error:
-              updateError
-          } =
-            await supabase
-              .from(
-                "automation_runs"
-              )
-              .update({
-                status:
-                  "FAILED",
+        await supabase
+          .from(
+            "automation_runs"
+          )
+          .update({
+            status:
+              "FAILED",
 
-                error_message:
-                  error.message ||
-                  "Unknown scanner error",
+            error_message:
+              error.message ||
+              "Unknown scanner error",
 
-                completed_at:
-                  new Date().toISOString(),
+            completed_at:
+              new Date().toISOString(),
 
-                metadata: {
-                  durationMs:
-                    Date.now() -
-                    startedAt,
+            metadata: {
+              durationMs:
+                Date.now() -
+                startedAt,
 
-                  failed:
-                    true
-                }
-              })
-              .eq(
-                "id",
-                automationRunId
-              );
-
-          if (
-            updateError
-          ) {
-            console.error(
-              "Failed to update automation run:",
-              updateError.message
-            );
-          }
-
-        } catch (
-          updateError
-        ) {
-          console.error(
-            "Automation failure update error:",
-            updateError.message
+              failed:
+                true
+            }
+          })
+          .eq(
+            "id",
+            automationRunId
           );
-        }
       }
 
       return res.status(500).json({
@@ -1963,12 +1966,7 @@ app.post(
           "Opportunity scanner failed.",
 
         error:
-          error.message ||
-          "Unknown scanner error",
-
-        durationMs:
-          Date.now() -
-          startedAt
+          error.message
       });
     }
   }
@@ -1993,19 +1991,18 @@ app.get(
       const {
         data,
         error
-      } =
-        await supabase
-          .from(
-            "automation_runs"
-          )
-          .select("*")
-          .order(
-            "created_at",
-            {
-              ascending: false
-            }
-          )
-          .limit(20);
+      } = await supabase
+        .from(
+          "automation_runs"
+        )
+        .select("*")
+        .order(
+          "created_at",
+          {
+            ascending: false
+          }
+        )
+        .limit(20);
 
       if (error) {
         throw error;
@@ -2013,17 +2010,10 @@ app.get(
 
       return res.json({
         success: true,
-
         runs:
           data || []
       });
-
     } catch (error) {
-      console.error(
-        "Scanner status error:",
-        error.message
-      );
-
       return res.status(500).json({
         success: false,
         message:
@@ -2034,12 +2024,8 @@ app.get(
 );
 
 // =====================================
-// AI TASK ENGINE
+// GET ALL AI TASKS
 // =====================================
-
-// -------------------------------------
-// GET ALL TASKS FROM SUPABASE
-// -------------------------------------
 
 app.get(
   "/api/tasks",
@@ -2048,7 +2034,6 @@ app.get(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -2074,7 +2059,6 @@ app.get(
             serializeTask
           )
       });
-
     } catch (error) {
       console.error(
         "Get AI tasks error:",
@@ -2094,9 +2078,9 @@ app.get(
   }
 );
 
-// -------------------------------------
-// CREATE TASK
-// -------------------------------------
+// =====================================
+// CREATE REAL AI TASK
+// =====================================
 
 app.post(
   "/api/tasks",
@@ -2105,7 +2089,6 @@ app.post(
       if (!supabase) {
         return res.status(503).json({
           success: false,
-
           message:
             "Supabase is not configured."
         });
@@ -2113,16 +2096,34 @@ app.post(
 
       const {
         title,
+
         description,
-        requirements = [],
-        context = {},
-        userProfile = {},
-        opportunityId = null,
-        source = "manual",
-        type = "general",
-        ownerId = null,
-        metadata = {}
-      } = req.body || {};
+
+        requirements =
+          [],
+
+        context =
+          {},
+
+        userProfile =
+          {},
+
+        opportunityId =
+          null,
+
+        source =
+          "external",
+
+        type =
+          "general",
+
+        ownerId =
+          null,
+
+        metadata =
+          {}
+      } =
+        req.body || {};
 
       if (
         !title &&
@@ -2136,15 +2137,64 @@ app.post(
         });
       }
 
+      let opportunity =
+        null;
+
+      if (
+        opportunityId
+      ) {
+        opportunity =
+          await loadOpportunityById(
+            opportunityId
+          );
+
+        if (!opportunity) {
+          return res.status(404).json({
+            success: false,
+
+            message:
+              "Linked opportunity not found."
+          });
+        }
+      }
+
+      const officialUrl =
+        metadata.officialUrl ||
+        metadata.official_url ||
+        opportunity?.url ||
+        null;
+
+      const external =
+        String(
+          source
+        ).toLowerCase() !==
+        "internal";
+
+      if (
+        external &&
+        !isOfficialHttpUrl(
+          officialUrl
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            "External tasks must be linked to a real official HTTP/HTTPS opportunity URL."
+        });
+      }
+
       let task =
         createTask({
           title:
             title ||
+            opportunity?.title ||
             "Untitled Task",
 
           description:
             description ||
-            "Task created without a description.",
+            opportunity?.description ||
+            "",
 
           type,
 
@@ -2161,34 +2211,49 @@ app.post(
 
             userProfile,
 
-            opportunityId
+            opportunityId:
+              opportunity?.id ||
+              opportunityId ||
+              null,
+
+            officialUrl,
+
+            officialSite:
+              opportunity?.source ||
+              metadata.platform ||
+              null,
+
+            company:
+              opportunity?.company ||
+              metadata.company ||
+              null,
+
+            sourceExternalId:
+              opportunity?.source_external_id ||
+              null,
+
+            paymentOffered:
+              opportunity?.payment ??
+              metadata.paymentOffered ??
+              null,
+
+            paymentCurrency:
+              opportunity?.currency ||
+              metadata.paymentCurrency ||
+              null
           }
         });
 
-      /*
-       * ai_tasks.id is UUID in Supabase.
-       *
-       * The task engine may generate a
-       * runtime identifier, so normalize it
-       * to UUID before persistence.
-       */
       task =
         ensureTaskUuid(
           task
         );
 
-      /*
-       * Supabase is now the persistent
-       * source of truth.
-       */
       const savedTask =
         await persistTask(
           task
         );
 
-      /*
-       * Keep runtime cache for compatibility.
-       */
       taskStore.set(
         task.id,
         savedTask ||
@@ -2198,14 +2263,19 @@ app.post(
       await logTaskActivity(
         savedTask ||
         task,
+
         "TASK_CREATED",
+
         {
           source:
             task.source,
 
           type:
-            task.type
+            task.type,
+
+          officialUrl
         },
+
         null
       );
 
@@ -2213,7 +2283,7 @@ app.post(
         success: true,
 
         message:
-          "AI task created successfully.",
+          "Real AI task created successfully.",
 
         task:
           serializeTask(
@@ -2221,7 +2291,6 @@ app.post(
             task
           )
       });
-
     } catch (error) {
       console.error(
         "Create AI task error:",
@@ -2241,41 +2310,18 @@ app.post(
   }
 );
 
-// -------------------------------------
+// =====================================
 // GET TASK
-// -------------------------------------
+// =====================================
 
 app.get(
   "/api/tasks/:id",
   async (req, res) => {
     try {
-      const {
-        id
-      } = req.params;
-
-      let task =
-        null;
-
-      /*
-       * Supabase is the primary source.
-       */
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      /*
-       * Runtime cache remains as fallback.
-       */
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
+      const task =
+        await loadTask(
+          req.params.id
+        );
 
       if (!task) {
         return res.status(404).json({
@@ -2286,26 +2332,15 @@ app.get(
         });
       }
 
-      /*
-       * Return the COMPLETE task.
-       *
-       * TaskDashboard depends on steps,
-       * plan, outputs, qualityCheck and
-       * lifecycle information.
-       */
       return res.json({
         success: true,
 
         task:
-          serializeTask(task)
+          serializeTask(
+            task
+          )
       });
-
     } catch (error) {
-      console.error(
-        "Get AI task error:",
-        error.message
-      );
-
       return res.status(500).json({
         success: false,
 
@@ -2319,46 +2354,86 @@ app.get(
   }
 );
 
-// -------------------------------------
+// =====================================
+// TASK OFFICIAL LINK
+// =====================================
+
+app.get(
+  "/api/tasks/:id/official-link",
+  async (req, res) => {
+    try {
+      const task =
+        await loadTask(
+          req.params.id
+        );
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Task not found."
+        });
+      }
+
+      const officialUrl =
+        getTaskOfficialUrl(
+          task
+        );
+
+      if (
+        !isOfficialHttpUrl(
+          officialUrl
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "No valid official URL is attached to this task."
+        });
+      }
+
+      return res.json({
+        success: true,
+
+        taskId:
+          task.id,
+
+        title:
+          task.title,
+
+        source:
+          task.source,
+
+        officialUrl
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message
+      });
+    }
+  }
+);
+
+// =====================================
 // RUN TASK
-// -------------------------------------
+// =====================================
 
 app.post(
   "/api/tasks/:id/run",
   async (req, res) => {
     try {
-      const {
-        id
-      } = req.params;
+      const id =
+        req.params.id;
 
       let task =
-        null;
-
-      /*
-       * Load from Supabase first.
-       */
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      /*
-       * Fallback to runtime cache.
-       */
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
+        await loadTask(id);
 
       if (!task) {
         return res.status(404).json({
           success: false,
-
           message:
             "Task not found."
         });
@@ -2379,14 +2454,32 @@ app.post(
         });
       }
 
-      console.log(
-        `AI Task Engine: planning task ${id}...`
-      );
+      if (
+        isExternalTask(
+          task
+        ) &&
+        !isOfficialHttpUrl(
+          getTaskOfficialUrl(
+            task
+          )
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
 
-      const planningContext = {
-        ...(task.metadata || {}),
-        ...(req.body?.context || {})
-      };
+          message:
+            "This external task has no real official URL. It cannot run as a real opportunity task."
+        });
+      }
+
+      const planningContext =
+        {
+          ...(task.metadata ||
+            {}),
+
+          ...(req.body?.context ||
+            {})
+        };
 
       const plannedTask =
         await planTask(
@@ -2394,9 +2487,6 @@ app.post(
           planningContext
         );
 
-      /*
-       * Persist planned task.
-       */
       const savedPlannedTask =
         await persistTask(
           plannedTask
@@ -2411,16 +2501,15 @@ app.post(
       await logTaskActivity(
         savedPlannedTask ||
         plannedTask,
+
         "TASK_PLANNED",
+
         {
           context:
             planningContext
         },
-        task.status
-      );
 
-      console.log(
-        `AI Task Engine: executing task ${id}...`
+        task.status
       );
 
       const executedTask =
@@ -2429,9 +2518,6 @@ app.post(
           plannedTask
         );
 
-      /*
-       * Persist execution result.
-       */
       const savedExecutedTask =
         await persistTask(
           executedTask
@@ -2446,8 +2532,11 @@ app.post(
       await logTaskActivity(
         savedExecutedTask ||
         executedTask,
+
         "TASK_EXECUTED",
+
         {},
+
         savedPlannedTask?.status ||
         plannedTask.status
       );
@@ -2464,43 +2553,18 @@ app.post(
             executedTask
           )
       });
-
     } catch (error) {
       console.error(
         "Run AI task error:",
         error.message
       );
 
-      let task =
-        null;
-
-      if (
-        supabase &&
-        isValidUuid(
+      const task =
+        await loadTask(
           req.params.id
-        )
-      ) {
-        try {
-          task =
-            await getTaskFromSupabase(
-              req.params.id
-            );
-        } catch (
-          loadError
-        ) {
-          console.error(
-            "Failed to reload task after error:",
-            loadError.message
-          );
-        }
-      }
-
-      if (!task) {
-        task =
-          taskStore.get(
-            req.params.id
-          );
-      }
+        ).catch(
+          () => null
+        );
 
       if (task) {
         const failedTask = {
@@ -2528,11 +2592,14 @@ app.post(
 
           await logTaskActivity(
             failedTask,
+
             "TASK_FAILED",
+
             {
               error:
                 error.message
             },
+
             task.status
           );
         } catch (
@@ -2557,9 +2624,6 @@ app.post(
         task:
           task
             ? serializeTask(
-                taskStore.get(
-                  req.params.id
-                ) ||
                 task
               )
             : null
@@ -2568,42 +2632,42 @@ app.post(
   }
 );
 
-// -------------------------------------
+// =====================================
 // APPROVE TASK
-// -------------------------------------
+// =====================================
 
 app.post(
   "/api/tasks/:id/approve",
   async (req, res) => {
     try {
-      const {
-        id
-      } = req.params;
-
-      let task =
-        null;
-
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
+      const task =
+        await loadTask(
+          req.params.id
+        );
 
       if (!task) {
         return res.status(404).json({
           success: false,
-
           message:
             "Task not found."
+        });
+      }
+
+      if (
+        isExternalTask(
+          task
+        ) &&
+        !isOfficialHttpUrl(
+          getTaskOfficialUrl(
+            task
+          )
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "External task cannot be approved without its official URL."
         });
       }
 
@@ -2619,7 +2683,7 @@ app.post(
         );
 
       taskStore.set(
-        id,
+        task.id,
         savedTask ||
         approvedTask
       );
@@ -2627,8 +2691,11 @@ app.post(
       await logTaskActivity(
         savedTask ||
         approvedTask,
+
         "TASK_APPROVED",
+
         req.body || {},
+
         task.status
       );
 
@@ -2636,24 +2703,26 @@ app.post(
         success: true,
 
         message:
-          "AI task approved successfully.",
+          "AI task approved for human-controlled submission.",
 
         task:
           serializeTask(
             savedTask ||
             approvedTask
-          )
+          ),
+
+        officialUrl:
+          getTaskOfficialUrl(
+            savedTask ||
+            approvedTask
+          ),
+
+        nextAction:
+          "Open the official site and submit manually."
       });
-
     } catch (error) {
-      console.error(
-        "Approve AI task error:",
-        error.message
-      );
-
       return res.status(409).json({
         success: false,
-
         message:
           error.message
       });
@@ -2661,68 +2730,98 @@ app.post(
   }
 );
 
-// -------------------------------------
-// MARK TASK AS SUBMITTED
-// -------------------------------------
+// =====================================
+// MANUAL EXTERNAL SUBMISSION
+// =====================================
 
 app.post(
   "/api/tasks/:id/submit",
   async (req, res) => {
     try {
-      const {
-        id
-      } = req.params;
-
-      let task =
-        null;
-
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
+      const task =
+        await loadTask(
+          req.params.id
+        );
 
       if (!task) {
         return res.status(404).json({
           success: false,
-
           message:
             "Task not found."
         });
       }
 
-      /*
-       * External submission must remain
-       * human-controlled.
-       *
-       * The user must explicitly confirm
-       * that the external submission happened.
-       */
       if (
-        req.body?.confirmedByUser !==
-        true
+        task.status !==
+        "APPROVED"
       ) {
-        return res.status(400).json({
+        return res.status(409).json({
           success: false,
 
           message:
-            "Submission must be confirmed by the user before it can be marked as submitted."
+            "Task must be approved before it can be recorded as submitted.",
+
+          currentStatus:
+            task.status
         });
       }
+
+      const officialUrl =
+        getTaskOfficialUrl(
+          task
+        );
+
+      if (
+        !isOfficialHttpUrl(
+          officialUrl
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "Cannot record submission because the task has no valid official URL."
+        });
+      }
+
+      requireUserConfirmation(
+        req.body,
+
+        "Submission can only be recorded after you manually submit the work on the official website."
+      );
+
+      const submittedAt =
+        req.body?.submittedAt ||
+        new Date().toISOString();
+
+      const submission = {
+        ...(req.body || {}),
+
+        officialUrl,
+
+        confirmedByUser:
+          true,
+
+        submittedAt
+      };
+
+      /*
+       * Persist the submission FIRST.
+       *
+       * If persistence fails, the task
+       * remains APPROVED and is not falsely
+       * marked SUBMITTED.
+       */
+
+      await persistSubmissionSafely(
+        task,
+        submission
+      );
 
       const submittedTask =
         markTaskSubmitted(
           task,
-          req.body || {}
+          submission
         );
 
       const savedTask =
@@ -2731,27 +2830,19 @@ app.post(
         );
 
       taskStore.set(
-        id,
+        task.id,
         savedTask ||
         submittedTask
-      );
-
-      await saveTaskSubmission(
-        savedTask ||
-        submittedTask,
-        {
-          ...(req.body || {}),
-
-          confirmedByUser:
-            true
-        }
       );
 
       await logTaskActivity(
         savedTask ||
         submittedTask,
+
         "TASK_SUBMITTED",
-        req.body || {},
+
+        submission,
+
         task.status
       );
 
@@ -2759,22 +2850,29 @@ app.post(
         success: true,
 
         message:
-          "Task marked as submitted.",
+          "Manual external submission recorded.",
 
         task:
           serializeTask(
             savedTask ||
             submittedTask
-          )
-      });
+          ),
 
+        officialUrl,
+
+        nextAction:
+          "Wait for the provider/platform response."
+      });
     } catch (error) {
       console.error(
         "Submit AI task error:",
         error.message
       );
 
-      return res.status(409).json({
+      return res.status(
+        error.statusCode ||
+        409
+      ).json({
         success: false,
 
         message:
@@ -2784,44 +2882,47 @@ app.post(
   }
 );
 
-// -------------------------------------
-// MARK TASK AS COMPLETED
-// -------------------------------------
+// =====================================
+// PROVIDER-CONFIRMED COMPLETION
+// =====================================
 
 app.post(
   "/api/tasks/:id/complete",
   async (req, res) => {
     try {
-      const {
-        id
-      } = req.params;
-
-      let task =
-        null;
-
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
+      const task =
+        await loadTask(
+          req.params.id
+        );
 
       if (!task) {
         return res.status(404).json({
           success: false,
-
           message:
             "Task not found."
         });
       }
+
+      if (
+        task.status !==
+        "SUBMITTED"
+      ) {
+        return res.status(409).json({
+          success: false,
+
+          message:
+            "Only submitted tasks can be completed.",
+
+          currentStatus:
+            task.status
+        });
+      }
+
+      requireUserConfirmation(
+        req.body,
+
+        "Completion must be confirmed after the provider accepts or confirms the work."
+      );
 
       const completedTask =
         markTaskCompleted(
@@ -2835,7 +2936,7 @@ app.post(
         );
 
       taskStore.set(
-        id,
+        task.id,
         savedTask ||
         completedTask
       );
@@ -2843,8 +2944,11 @@ app.post(
       await logTaskActivity(
         savedTask ||
         completedTask,
+
         "TASK_COMPLETED",
+
         req.body || {},
+
         task.status
       );
 
@@ -2852,246 +2956,20 @@ app.post(
         success: true,
 
         message:
-          "Task marked as completed.",
+          "Provider-confirmed completion recorded.",
 
         task:
           serializeTask(
             savedTask ||
             completedTask
-          )
-      });
+          ),
 
+        nextAction:
+          "Record payment only after the payment has actually been received."
+      });
     } catch (error) {
-      console.error(
-        "Complete AI task error:",
-        error.message
-      );
-
-      return res.status(409).json({
+      return res.status(
+        error.statusCode ||
+        409
+      ).json({
         success: false,
-
-        message:
-          error.message
-      });
-    }
-  }
-);
-
-// -------------------------------------
-// MARK TASK AS PAID
-// -------------------------------------
-
-app.post(
-  "/api/tasks/:id/paid",
-  async (req, res) => {
-    try {
-      const {
-        id
-      } = req.params;
-
-      let task =
-        null;
-
-      if (
-        supabase &&
-        isValidUuid(id)
-      ) {
-        task =
-          await getTaskFromSupabase(
-            id
-          );
-      }
-
-      if (!task) {
-        task =
-          taskStore.get(id);
-      }
-
-      if (!task) {
-        return res.status(404).json({
-          success: false,
-
-          message:
-            "Task not found."
-        });
-      }
-
-      /*
-       * A task must not be marked PAID
-       * without actual user confirmation.
-       */
-      if (
-        req.body?.confirmedByUser !==
-        true
-      ) {
-        return res.status(400).json({
-          success: false,
-
-          message:
-            "Payment must be confirmed by the user before the task can be marked as PAID."
-        });
-      }
-
-      const paidTask =
-        markTaskPaid(
-          task,
-          req.body || {}
-        );
-
-      const savedTask =
-        await persistTask(
-          paidTask
-        );
-
-      taskStore.set(
-        id,
-        savedTask ||
-        paidTask
-      );
-
-      await saveTaskPayment(
-        savedTask ||
-        paidTask,
-        {
-          ...(req.body || {}),
-
-          status:
-            "PAID",
-
-          confirmedByUser:
-            true,
-
-          paidAt:
-            paidTask.paidAt
-        }
-      );
-
-      await logTaskActivity(
-        savedTask ||
-        paidTask,
-        "TASK_PAID",
-        req.body || {},
-        task.status
-      );
-
-      return res.json({
-        success: true,
-
-        message:
-          "Task marked as paid.",
-
-        task:
-          serializeTask(
-            savedTask ||
-            paidTask
-          )
-      });
-
-    } catch (error) {
-      console.error(
-        "Mark AI task paid error:",
-        error.message
-      );
-
-      return res.status(409).json({
-        success: false,
-
-        message:
-          error.message
-      });
-    }
-  }
-);
-
-// =====================================
-// FRONTEND
-// =====================================
-
-const distPath =
-  path.join(
-    __dirname,
-    "dist"
-  );
-
-app.use(
-  express.static(
-    distPath
-  )
-);
-
-// =====================================
-// SPA FALLBACK
-// =====================================
-
-app.get(
-  "/{*splat}",
-  (req, res, next) => {
-    if (
-      req.path.startsWith(
-        "/api/"
-      )
-    ) {
-      return next();
-    }
-
-    res.sendFile(
-      path.join(
-        distPath,
-        "index.html"
-      )
-    );
-  }
-);
-
-// =====================================
-// 404
-// =====================================
-
-app.use(
-  (req, res) => {
-    res.status(404).json({
-      success: false,
-
-      message:
-        "Route not found."
-    });
-  }
-);
-
-// =====================================
-// ERROR HANDLER
-// =====================================
-
-app.use(
-  (
-    err,
-    req,
-    res,
-    next
-  ) => {
-    console.error(
-      "Unhandled server error:",
-      err
-    );
-
-    res.status(500).json({
-      success: false,
-
-      message:
-        "Internal server error."
-    });
-  }
-);
-
-// =====================================
-// START SERVER
-// =====================================
-
-app.listen(
-  PORT,
-  () => {
-    console.log(
-      `OpportunityAI running on port ${PORT}`
-    );
-  }
-);
