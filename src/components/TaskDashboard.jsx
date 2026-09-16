@@ -176,23 +176,6 @@ export default function TaskDashboard() {
        */
       await loadTasks(createdTask?.id || null);
 
-      /*
-       * Ensure the created task remains selected even
-       * if the returned list has changed order.
-       */
-      setTask((currentTask) => {
-        if (createdTask?.id) {
-          const savedCreatedTask = tasks.find(
-            (savedTask) =>
-              savedTask.id === createdTask.id
-          );
-
-          return savedCreatedTask || currentTask || createdTask;
-        }
-
-        return currentTask || createdTask;
-      });
-
       setMessage("Task created successfully.");
 
       setTitle("");
@@ -268,15 +251,6 @@ export default function TaskDashboard() {
        * while preserving the current selection.
        */
       await loadTasks(selectedTaskId);
-
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || refreshedTask;
-      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -306,15 +280,6 @@ export default function TaskDashboard() {
       setTask(updatedTask);
 
       await loadTasks(selectedTaskId);
-
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || updatedTask;
-      });
 
       setMessage(
         "Task executed. Review the result before approving."
@@ -352,15 +317,6 @@ export default function TaskDashboard() {
       setTask(updatedTask);
 
       await loadTasks(selectedTaskId);
-
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || updatedTask;
-      });
 
       setMessage("Task approved.");
     } catch (err) {
@@ -407,15 +363,6 @@ export default function TaskDashboard() {
 
       await loadTasks(selectedTaskId);
 
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || updatedTask;
-      });
-
       setMessage("Task marked as submitted.");
     } catch (err) {
       setError(err.message);
@@ -450,15 +397,6 @@ export default function TaskDashboard() {
       setTask(updatedTask);
 
       await loadTasks(selectedTaskId);
-
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || updatedTask;
-      });
 
       setMessage("Task marked as completed.");
     } catch (err) {
@@ -503,15 +441,6 @@ export default function TaskDashboard() {
       setTask(updatedTask);
 
       await loadTasks(selectedTaskId);
-
-      setTask((currentTask) => {
-        const matchingTask = tasks.find(
-          (savedTask) =>
-            savedTask.id === selectedTaskId
-        );
-
-        return matchingTask || currentTask || updatedTask;
-      });
 
       setMessage("Payment recorded.");
     } catch (err) {
