@@ -1,0 +1,613 @@
+import "dotenv/config";
+import { createClient } from "@supabase/supabase-js";
+
+// ============================================================
+// SUPABASE AI TASK PERSISTENCE
+// ============================================================
+
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
+
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SECRET_KEY;
+
+const supabase =
+  SUPABASE_URL &&
+  SUPABASE_SECRET_KEY
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_SECRET_KEY
+      )
+    : null;
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function requireSupabase() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
+
+  return supabase;
+}
+
+// ============================================================
+// SAVE TASK
+// ============================================================
+
+export async function saveTaskToSupabase(
+  task
+) {
+  const client =
+    requireSupabase();
+
+  const {
+    data,
+    error
+  } = await client
+    .from("ai_tasks")
+    .upsert(
+      {
+        id:
+          task.id,
+
+        owner_id:
+          task.ownerId || null,
+
+        opportunity_id:
+          task.opportunityId || null,
+
+        title:
+          task.title,
+
+        description:
+          task.description,
+
+        type:
+          task.type || "general",
+
+        source:
+          task.source || "manual",
+
+        status:
+          task.status,
+
+        automation_percentage:
+          task.automationPercentage || 0,
+
+        plan:
+          task.plan || {},
+
+        outputs:
+          task.outputs || [],
+
+        quality_check:
+          task.qualityCheck || null,
+
+        metadata:
+          task.metadata || {},
+
+        error:
+          task.error || null,
+
+        created_at:
+          task.createdAt || null,
+
+        started_at:
+          task.startedAt || null,
+
+        approved_at:
+          task.approvedAt || null,
+
+        submitted_at:
+          task.submittedAt || null,
+
+        completed_at:
+          task.completedAt || null,
+
+        paid_at:
+          task.paidAt || null,
+
+        approved_by:
+          task.approvedBy || null,
+
+        submission:
+          task.submission || null,
+
+        completion:
+          task.completion || null,
+
+        payment:
+          task.payment || null
+      },
+      {
+        onConflict:
+          "id"
+      }
+    )
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+// ============================================================
+// SAVE TASK STEPS
+// ============================================================
+
+export async function saveTaskStepsToSupabase(
+  task
+) {
+  const client =
+    requireSupabase();
+
+  if (
+    !Array.isArray(
+      task.steps
+    )
+  ) {
+    return [];
+  }
+
+  const rows =
+    task.steps.map(
+      (step, index) => ({
+        task_id:
+          task.id,
+
+        step_id:
+          step.id ||
+          `step_${index + 1}`,
+
+        step_order:
+          Number(
+            step.order
+          ) ||
+          index + 1,
+
+        title:
+          step.title || "",
+
+        description:
+          step.description || "",
+
+        action:
+          step.action || "REVIEW",
+
+        automation:
+          Number(
+            step.automation
+          ) || 0,
+
+        requires_human:
+          Boolean(
+            step.requiresHuman
+          ),
+
+        status:
+          step.status || "PENDING",
+
+        output:
+          step.output || null,
+
+        error:
+          step.error || null
+      })
+    );
+
+  const {
+    data,
+    error
+  } = await client
+    .from("ai_task_steps")
+    .upsert(
+      rows,
+      {
+        onConflict:
+          "task_id,step_id"
+      }
+    )
+    .select();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+// ============================================================
+// SAVE COMPLETE TASK
+// ============================================================
+
+export async function persistTask(
+  task
+) {
+  const savedTask =
+    await saveTaskToSupabase(
+      task
+    );
+
+  await saveTaskStepsToSupabase(
+    task
+  );
+
+  return savedTask;
+}
+
+// ============================================================
+// GET TASK
+// ============================================================
+
+export async function getTaskFromSupabase(
+  taskId
+) {
+  const client =
+    requireSupabase();
+
+  const {
+    data,
+    error
+  } = await client
+    .from("ai_tasks")
+    .select(`
+      *,
+      ai_task_steps (*)
+    `)
+    .eq(
+      "id",
+      taskId
+    )
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id:
+      data.id,
+
+    ownerId:
+      data.owner_id,
+
+    opportunityId:
+      data.opportunity_id,
+
+    title:
+      data.title,
+
+    description:
+      data.description,
+
+    type:
+      data.type,
+
+    source:
+      data.source,
+
+    status:
+      data.status,
+
+    automationPercentage:
+      data.automation_percentage,
+
+    plan:
+      data.plan,
+
+    steps:
+      (data.ai_task_steps || [])
+        .sort(
+          (a, b) =>
+            a.step_order -
+            b.step_order
+        )
+        .map(
+          (step) => ({
+            id:
+              step.step_id,
+
+            order:
+              step.step_order,
+
+            title:
+              step.title,
+
+            description:
+              step.description,
+
+            action:
+              step.action,
+
+            automation:
+              step.automation,
+
+            requiresHuman:
+              step.requires_human,
+
+            status:
+              step.status,
+
+            output:
+              step.output,
+
+            error:
+              step.error
+          })
+        ),
+
+    outputs:
+      data.outputs || [],
+
+    qualityCheck:
+      data.quality_check,
+
+    metadata:
+      data.metadata || {},
+
+    error:
+      data.error,
+
+    createdAt:
+      data.created_at,
+
+    startedAt:
+      data.started_at,
+
+    approvedAt:
+      data.approved_at,
+
+    submittedAt:
+      data.submitted_at,
+
+    completedAt:
+      data.completed_at,
+
+    paidAt:
+      data.paid_at,
+
+    approvedBy:
+      data.approved_by,
+
+    submission:
+      data.submission,
+
+    completion:
+      data.completion,
+
+    payment:
+      data.payment
+  };
+}
+
+// ============================================================
+// LIST TASKS
+// ============================================================
+
+export async function listTasksFromSupabase(
+  ownerId = null
+) {
+  const client =
+    requireSupabase();
+
+  let query =
+    client
+      .from("ai_tasks")
+      .select(`
+        *,
+        ai_task_steps (*)
+      `)
+      .order(
+        "created_at",
+        {
+          ascending: false
+        }
+      );
+
+  if (ownerId) {
+    query =
+      query.eq(
+        "owner_id",
+        ownerId
+      );
+  }
+
+  const {
+    data,
+    error
+  } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+// ============================================================
+// ACTIVITY LOG
+// ============================================================
+
+export async function logTaskActivity(
+  task,
+  event,
+  metadata = {}
+) {
+  const client =
+    requireSupabase();
+
+  const {
+    error
+  } = await client
+    .from("ai_task_activity")
+    .insert({
+      task_id:
+        task.id,
+
+      owner_id:
+        task.ownerId || null,
+
+      event,
+
+      status:
+        task.status,
+
+      metadata
+    });
+
+  if (error) {
+    throw error;
+  }
+}
+
+// ============================================================
+// SUBMISSION TRACKING
+// ============================================================
+
+export async function saveTaskSubmission(
+  task,
+  submission = {}
+) {
+  const client =
+    requireSupabase();
+
+  const {
+    data,
+    error
+  } = await client
+    .from(
+      "ai_task_submissions"
+    )
+    .insert({
+      task_id:
+        task.id,
+
+      owner_id:
+        task.ownerId || null,
+
+      official_url:
+        submission.officialUrl ||
+        submission.url ||
+        null,
+
+      method:
+        submission.method ||
+        "manual",
+
+      reference:
+        submission.reference ||
+        null,
+
+      notes:
+        submission.notes ||
+        null,
+
+      confirmed_by_user:
+        Boolean(
+          submission.confirmedByUser
+        ),
+
+      submitted_at:
+        submission.submittedAt ||
+        new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+// ============================================================
+// PAYMENT TRACKING
+// ============================================================
+
+export async function saveTaskPayment(
+  task,
+  payment = {}
+) {
+  const client =
+    requireSupabase();
+
+  const {
+    data,
+    error
+  } = await client
+    .from(
+      "ai_task_payments"
+    )
+    .insert({
+      task_id:
+        task.id,
+
+      owner_id:
+        task.ownerId || null,
+
+      amount:
+        payment.amount ??
+        null,
+
+      currency:
+        payment.currency ||
+        null,
+
+      payment_method:
+        payment.paymentMethod ||
+        null,
+
+      provider:
+        payment.provider ||
+        null,
+
+      provider_reference:
+        payment.providerReference ||
+        null,
+
+      status:
+        payment.status ||
+        "PENDING",
+
+      expected_at:
+        payment.expectedAt ||
+        null,
+
+      paid_at:
+        payment.paidAt ||
+        null,
+
+      confirmed_by_user:
+        Boolean(
+          payment.confirmedByUser
+        ),
+
+      evidence:
+        payment.evidence ||
+        null,
+
+      notes:
+        payment.notes ||
+        null
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
