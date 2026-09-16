@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import TaskDashboard from "./components/TaskDashboard";
+
 const API_BASE = "";
 
 const tabs = [
@@ -24,39 +25,22 @@ const initialProfile = {
 };
 
 function App() {
-  const [activeTab, setActiveTab] =
-    useState("Overview");
+  const [activeTab, setActiveTab] = useState("Overview");
 
-  const [scanning, setScanning] =
-    useState(false);
-
-  const [scanMessage, setScanMessage] =
-    useState("");
-
-  const [opportunities, setOpportunities] =
-    useState([]);
-
-  const [profile] =
-    useState(initialProfile);
-
-  const [error, setError] =
-    useState("");
+  const [scanning, setScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
+  const [opportunities, setOpportunities] = useState([]);
+  const [profile] = useState(initialProfile);
+  const [error, setError] = useState("");
 
   /* ================================= */
   /* PREPARATION WORKFLOW */
   /* ================================= */
 
-  const [preparing, setPreparing] =
-    useState(false);
-
-  const [preparation, setPreparation] =
-    useState(null);
-
-  const [preparationError, setPreparationError] =
-    useState("");
-
-  const [selectedOpportunity, setSelectedOpportunity] =
-    useState(null);
+  const [preparing, setPreparing] = useState(false);
+  const [preparation, setPreparation] = useState(null);
+  const [preparationError, setPreparationError] = useState("");
+  const [selectedOpportunity, setSelectedOpportunity] = useState(null);
 
   /* ================================= */
   /* SCANNER */
@@ -73,12 +57,9 @@ function App() {
         `${API_BASE}/api/scanner/run`,
         {
           method: "POST",
-
           headers: {
-            "Content-Type":
-              "application/json"
+            "Content-Type": "application/json"
           },
-
           body: JSON.stringify({
             userProfile: profile,
             save: true
@@ -86,8 +67,7 @@ function App() {
         }
       );
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
       if (!response.ok || !data.success) {
         throw new Error(
@@ -97,13 +77,9 @@ function App() {
         );
       }
 
-      setOpportunities(
-        data.opportunities || []
-      );
+      setOpportunities(data.opportunities || []);
 
-      if (
-        data.opportunities?.length
-      ) {
+      if (data.opportunities?.length) {
         setScanMessage(
           `Scanner found ${data.opportunities.length} relevant opportunities.`
         );
@@ -114,10 +90,7 @@ function App() {
         );
       }
     } catch (err) {
-      console.error(
-        "Scanner error:",
-        err
-      );
+      console.error("Scanner error:", err);
 
       setError(
         err.message ||
@@ -134,162 +107,138 @@ function App() {
   /* LOAD SAVED OPPORTUNITIES */
   /* ================================= */
 
-  const loadSavedOpportunities =
-    async () => {
-      setError("");
-      setScanMessage(
-        "Loading saved opportunities..."
+  const loadSavedOpportunities = async () => {
+    setError("");
+    setScanMessage("Loading saved opportunities...");
+
+    try {
+      const response = await fetch(
+        "/api/opportunities"
       );
 
-      try {
-        const response =
-          await fetch(
-            "/api/opportunities"
-          );
+      const data = await response.json();
 
-        const data =
-          await response.json();
-
-        if (!response.ok || !data.success) {
-          throw new Error(
-            data.message ||
-              "Unable to load opportunities."
-          );
-        }
-
-        setOpportunities(
-          data.opportunities || []
-        );
-
-        setScanMessage(
-          `Loaded ${data.opportunities?.length || 0} saved opportunities.`
-        );
-      } catch (err) {
-        console.error(
-          "Load opportunities error:",
-          err
-        );
-
-        setError(
-          err.message ||
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message ||
             "Unable to load opportunities."
         );
       }
-    };
+
+      setOpportunities(
+        data.opportunities || []
+      );
+
+      setScanMessage(
+        `Loaded ${
+          data.opportunities?.length || 0
+        } saved opportunities.`
+      );
+    } catch (err) {
+      console.error(
+        "Load opportunities error:",
+        err
+      );
+
+      setError(
+        err.message ||
+          "Unable to load opportunities."
+      );
+    }
+  };
 
   /* ================================= */
   /* PREPARE OPPORTUNITY */
   /* ================================= */
 
-  const prepareSelectedOpportunity =
-    async (opportunity) => {
-      if (!opportunity?.id) {
-        setPreparationError(
-          "This opportunity does not have a valid ID."
-        );
-
-        return;
-      }
-
-      setPreparing(true);
-      setPreparation(null);
-      setPreparationError("");
-      setSelectedOpportunity(
-        opportunity
+  const prepareSelectedOpportunity = async (
+    opportunity
+  ) => {
+    if (!opportunity?.id) {
+      setPreparationError(
+        "This opportunity does not have a valid ID."
       );
 
-      try {
-        const response =
-          await fetch(
-            `${API_BASE}/api/opportunities/${encodeURIComponent(
-              opportunity.id
-            )}/prepare`,
-            {
-              method: "POST",
+      return;
+    }
 
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
+    setPreparing(true);
+    setPreparation(null);
+    setPreparationError("");
+    setSelectedOpportunity(opportunity);
 
-              body: JSON.stringify({
-                userProfile: profile
-              })
-            }
-          );
-
-        const data =
-          await response.json();
-
-        if (
-          !response.ok ||
-          !data.success
-        ) {
-          throw new Error(
-            data.message ||
-              data.error ||
-              "Preparation failed."
-          );
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/opportunities/${encodeURIComponent(
+          opportunity.id
+        )}/prepare`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            userProfile: profile
+          })
         }
+      );
 
-        setPreparation(
-          data.preparation || null
-        );
+      const data = await response.json();
 
-        /*
-         * Update the opportunity locally
-         * so the UI immediately reflects
-         * the PREPARED status.
-         */
-        setOpportunities(
-          (current) =>
-            current.map(
-              (item) =>
-                item.id === opportunity.id
-                  ? {
-                      ...item,
-                      status:
-                        "PREPARED"
-                    }
-                  : item
-            )
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message ||
+            data.error ||
+            "Preparation failed."
         );
-
-        setScanMessage(
-          "Opportunity prepared successfully."
-        );
-
-      } catch (err) {
-        console.error(
-          "Preparation error:",
-          err
-        );
-
-        setPreparationError(
-          err.message ||
-            "Unable to prepare this opportunity."
-        );
-      } finally {
-        setPreparing(false);
       }
-    };
+
+      setPreparation(
+        data.preparation || null
+      );
+
+      setOpportunities((current) =>
+        current.map((item) =>
+          item.id === opportunity.id
+            ? {
+                ...item,
+                status: "PREPARED"
+              }
+            : item
+        )
+      );
+
+      setScanMessage(
+        "Opportunity prepared successfully."
+      );
+    } catch (err) {
+      console.error(
+        "Preparation error:",
+        err
+      );
+
+      setPreparationError(
+        err.message ||
+          "Unable to prepare this opportunity."
+      );
+    } finally {
+      setPreparing(false);
+    }
+  };
 
   /* ================================= */
   /* CLOSE PREPARATION */
   /* ================================= */
 
-  const closePreparation =
-    () => {
-      if (preparing) {
-        return;
-      }
+  const closePreparation = () => {
+    if (preparing) {
+      return;
+    }
 
-      setPreparation(null);
-      setPreparationError("");
-      setSelectedOpportunity(
-        null
-      );
-    };
+    setPreparation(null);
+    setPreparationError("");
+    setSelectedOpportunity(null);
+  };
 
   /* ================================= */
   /* SCORE FORMAT */
@@ -314,8 +263,7 @@ function App() {
 
   const getPriority = (opportunity) => {
     const score =
-      opportunity.aiAnalysis
-        ?.fitScore ??
+      opportunity.aiAnalysis?.fitScore ??
       opportunity.matchScore ??
       0;
 
@@ -339,13 +287,10 @@ function App() {
 
       <header className="header">
         <div>
-          <h1>
-            OpportunityAI
-          </h1>
+          <h1>OpportunityAI</h1>
 
           <p className="subtitle">
-            AI-powered opportunity
-            automation
+            AI-powered opportunity automation
           </p>
         </div>
 
@@ -385,13 +330,9 @@ function App() {
           </p>
 
           <div className="target">
-            <strong>
-              TZS 10,000+
-            </strong>
+            <strong>TZS 10,000+</strong>
 
-            <span>
-              daily target
-            </span>
+            <span>daily target</span>
           </div>
 
           <small className="notice">
@@ -407,7 +348,6 @@ function App() {
       {/* ================================= */}
 
       <nav className="tabs">
-
         {tabs.map((tab) => (
           <button
             key={tab}
@@ -423,7 +363,6 @@ function App() {
             {tab}
           </button>
         ))}
-
       </nav>
 
       {/* ================================= */}
@@ -432,13 +371,15 @@ function App() {
 
       <main className="main">
 
-      {/* ================================= */}
-{/* AI TASK ENGINE */}
-{/* ================================= */}
+        {/* ================================= */}
+        {/* OVERVIEW */}
+        {/* ================================= */}
 
-{activeTab === "AI Tasks" && (
-  <TaskDashboard />
-)}
+        {activeTab === "Overview" && (
+          <>
+            {/* ================================= */}
+            {/* SCANNER */}
+            {/* ================================= */}
 
             <section className="scanner-card">
 
@@ -510,9 +451,9 @@ function App() {
 
             </section>
 
-            {/* ============================ */}
+            {/* ================================= */}
             {/* WORKFLOW */}
-            {/* ============================ */}
+            {/* ================================= */}
 
             <section className="workflow-card">
 
@@ -530,45 +471,37 @@ function App() {
                   "Reach Out",
                   "Track",
                   "Convert"
-                ].map(
-                  (
-                    step,
-                    index
-                  ) => (
-                    <React.Fragment
-                      key={step}
-                    >
+                ].map((step, index) => (
+                  <React.Fragment key={step}>
 
-                      <div className="workflow-step">
+                    <div className="workflow-step">
 
-                        <span>
-                          {index + 1}
-                        </span>
+                      <span>
+                        {index + 1}
+                      </span>
 
-                        <strong>
-                          {step}
-                        </strong>
+                      <strong>
+                        {step}
+                      </strong>
 
+                    </div>
+
+                    {index < 6 && (
+                      <div className="arrow">
+                        →
                       </div>
+                    )}
 
-                      {index <
-                        6 && (
-                        <div className="arrow">
-                          →
-                        </div>
-                      )}
-
-                    </React.Fragment>
-                  )
-                )}
+                  </React.Fragment>
+                ))}
 
               </div>
 
             </section>
 
-            {/* ============================ */}
+            {/* ================================= */}
             {/* CHANNELS */}
-            {/* ============================ */}
+            {/* ================================= */}
 
             <section className="channels">
 
@@ -626,7 +559,6 @@ function App() {
               </div>
 
             </section>
-
           </>
         )}
 
@@ -634,8 +566,7 @@ function App() {
         {/* OPPORTUNITIES */}
         {/* ================================= */}
 
-        {activeTab ===
-          "Opportunities" && (
+        {activeTab === "Opportunities" && (
           <section>
 
             <div className="page-heading">
@@ -664,8 +595,7 @@ function App() {
 
             </div>
 
-            {opportunities.length ===
-              0 && (
+            {opportunities.length === 0 && (
               <div className="empty-state">
 
                 <div className="empty-icon">
@@ -885,11 +815,18 @@ function App() {
         )}
 
         {/* ================================= */}
+        {/* AI TASK ENGINE */}
+        {/* ================================= */}
+
+        {activeTab === "AI Tasks" && (
+          <TaskDashboard />
+        )}
+
+        {/* ================================= */}
         {/* OUTREACH */}
         {/* ================================= */}
 
-        {activeTab ===
-          "Outreach" && (
+        {activeTab === "Outreach" && (
           <section className="placeholder-page">
 
             <div className="placeholder-icon">
@@ -930,8 +867,7 @@ function App() {
         {/* APPLICATIONS */}
         {/* ================================= */}
 
-        {activeTab ===
-          "Applications" && (
+        {activeTab === "Applications" && (
           <section className="placeholder-page">
 
             <div className="placeholder-icon">
@@ -956,9 +892,7 @@ function App() {
             <div className="tracker-grid">
 
               <div>
-                <strong>
-                  0
-                </strong>
+                <strong>0</strong>
 
                 <span>
                   Prepared
@@ -966,9 +900,7 @@ function App() {
               </div>
 
               <div>
-                <strong>
-                  0
-                </strong>
+                <strong>0</strong>
 
                 <span>
                   Applied
@@ -976,9 +908,7 @@ function App() {
               </div>
 
               <div>
-                <strong>
-                  0
-                </strong>
+                <strong>0</strong>
 
                 <span>
                   Interviews
@@ -986,9 +916,7 @@ function App() {
               </div>
 
               <div>
-                <strong>
-                  0
-                </strong>
+                <strong>0</strong>
 
                 <span>
                   Offers
@@ -1309,16 +1237,14 @@ function App() {
                                   .package
                                   .skills
                               ]
-                          ).map(
-                            (skill) => (
-                              <span
-                                className="skill"
-                                key={skill}
-                              >
-                                {skill}
-                              </span>
-                            )
-                          )}
+                          ).map((skill) => (
+                            <span
+                              className="skill"
+                              key={skill}
+                            >
+                              {skill}
+                            </span>
+                          ))}
 
                         </div>
 
@@ -1453,45 +1379,32 @@ function App() {
                 {preparation.validation && (
                   <div
                     className={
-                      preparation
-                        .validation
-                        .valid
+                      preparation.validation.valid
                         ? "validation valid"
                         : "validation invalid"
                     }
                   >
 
                     <strong>
-                      {preparation
-                        .validation
-                        .valid
+                      {preparation.validation.valid
                         ? "✓ Preparation validated"
                         : "⚠ Needs review"}
                     </strong>
 
-                    {preparation
-                      .validation
-                      .errors
+                    {preparation.validation.errors
                       ?.length > 0 && (
                       <ul>
 
-                        {preparation
-                          .validation
-                          .errors
-                          .map(
-                            (
-                              validationError,
-                              index
-                            ) => (
-                              <li
-                                key={index}
-                              >
-                                {
-                                  validationError
-                                }
-                              </li>
-                            )
-                          )}
+                        {preparation.validation.errors.map(
+                          (
+                            validationError,
+                            index
+                          ) => (
+                            <li key={index}>
+                              {validationError}
+                            </li>
+                          )
+                        )}
 
                       </ul>
                     )}
@@ -1512,8 +1425,7 @@ function App() {
 
                     <p>
                       {
-                        preparation
-                          .nextAction
+                        preparation.nextAction
                       }
                     </p>
 
@@ -2150,9 +2062,7 @@ function App() {
           margin-top: 4px;
         }
 
-        /* ================================= */
         /* PREPARATION MODAL */
-        /* ================================= */
 
         .modal-overlay {
           position: fixed;
@@ -2439,9 +2349,7 @@ function App() {
 
         /* MOBILE */
 
-        @media (
-          max-width: 700px
-        ) {
+        @media (max-width: 700px) {
 
           .header {
             padding: 18px 5%;
