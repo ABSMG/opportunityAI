@@ -44,85 +44,87 @@ export async function saveTaskToSupabase(
   const client =
     requireSupabase();
 
-  const {
+  const taskData = {
+    id:
+      task.id,
+
+    owner_id:
+      task.ownerId || null,
+
+    opportunity_id:
+      task.opportunityId || null,
+
+    title:
+      task.title,
+
+    description:
+      task.description,
+
+    type:
+      task.type || "general",
+
+    source:
+      task.source || "manual",
+
+    status:
+      task.status,
+
+    automation_percentage:
+      task.automationPercentage || 0,
+
+    plan:
+      task.plan || {},
+
+    outputs:
+      task.outputs || [],
+
+    quality_check:
+      task.qualityCheck || null,
+
+    metadata:
+      task.metadata || {},
+
+    error:
+      task.error || null,
+
+    created_at:
+      task.createdAt || null,
+
+    started_at:
+      task.startedAt || null,
+
+    approved_at:
+      task.approvedAt || null,
+
+    submitted_at:
+      task.submittedAt || null,
+
+    completed_at:
+      task.completedAt || null,
+
+    paid_at:
+      task.paidAt || null,
+
+    approved_by:
+      task.approvedBy || null,
+
+    submission:
+      task.submission || null,
+
+    completion:
+      task.completion || null,
+
+    payment:
+      task.payment || null
+  };
+
+  let {
     data,
     error
   } = await client
     .from("ai_tasks")
     .upsert(
-      {
-        id:
-          task.id,
-
-        owner_id:
-          task.ownerId || null,
-
-        opportunity_id:
-          task.opportunityId || null,
-
-        title:
-          task.title,
-
-        description:
-          task.description,
-
-        type:
-          task.type || "general",
-
-        source:
-          task.source || "manual",
-
-        status:
-          task.status,
-
-        automation_percentage:
-          task.automationPercentage || 0,
-
-        plan:
-          task.plan || {},
-
-        outputs:
-          task.outputs || [],
-
-        quality_check:
-          task.qualityCheck || null,
-
-        metadata:
-          task.metadata || {},
-
-        error:
-          task.error || null,
-
-        created_at:
-          task.createdAt || null,
-
-        started_at:
-          task.startedAt || null,
-
-        approved_at:
-          task.approvedAt || null,
-
-        submitted_at:
-          task.submittedAt || null,
-
-        completed_at:
-          task.completedAt || null,
-
-        paid_at:
-          task.paidAt || null,
-
-        approved_by:
-          task.approvedBy || null,
-
-        submission:
-          task.submission || null,
-
-        completion:
-          task.completion || null,
-
-        payment:
-          task.payment || null
-      },
+      taskData,
       {
         onConflict:
           "id"
@@ -130,6 +132,60 @@ export async function saveTaskToSupabase(
     )
     .select()
     .single();
+
+  // ==========================================================
+  // SCHEMA CACHE FALLBACK
+  // ==========================================================
+  //
+  // If the deployed PostgREST schema cache is temporarily
+  // missing approved_by, retry the same operation without
+  // approved_by instead of failing the whole task.
+  //
+  // approved_by remains in the normal payload and will be
+  // saved automatically once the schema cache is healthy.
+  // ==========================================================
+
+  const approvedBySchemaCacheError =
+    error &&
+    (
+      error.code === "PGRST204" ||
+      error.code === "PGRST205"
+    ) &&
+    typeof error.message === "string" &&
+    error.message.includes(
+      "approved_by"
+    ) &&
+    error.message.includes(
+      "schema cache"
+    );
+
+  if (
+    approvedBySchemaCacheError
+  ) {
+    const {
+      approved_by,
+      ...fallbackTaskData
+    } = taskData;
+
+    const fallbackResult =
+      await client
+        .from("ai_tasks")
+        .upsert(
+          fallbackTaskData,
+          {
+            onConflict:
+              "id"
+          }
+        )
+        .select()
+        .single();
+
+    data =
+      fallbackResult.data;
+
+    error =
+      fallbackResult.error;
+  }
 
   if (error) {
     throw error;
