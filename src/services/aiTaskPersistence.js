@@ -119,6 +119,17 @@ export async function saveTaskToSupabase(
   const client =
     requireSupabase();
 
+  /*
+   * ai_tasks.created_at is NOT NULL.
+   *
+   * If the task already has createdAt, preserve it.
+   * Otherwise generate a new timestamp instead of
+   * sending null to Supabase.
+   */
+  const createdAt =
+    task.createdAt ||
+    new Date().toISOString();
+
   const taskData = {
     id:
       task.id,
@@ -162,8 +173,13 @@ export async function saveTaskToSupabase(
     error:
       task.error || null,
 
+    /*
+     * FIX:
+     * Never send null to the NOT NULL
+     * ai_tasks.created_at column.
+     */
     created_at:
-      task.createdAt || null,
+      createdAt,
 
     started_at:
       task.startedAt || null,
@@ -444,9 +460,21 @@ export async function persistTask(
     );
   }
 
+  /*
+   * Ensure createdAt exists on the in-memory
+   * task as well as in the database.
+   */
+  const normalizedTask = {
+    ...task,
+
+    createdAt:
+      task.createdAt ||
+      new Date().toISOString()
+  };
+
   const savedTask =
     await saveTaskToSupabase(
-      task
+      normalizedTask
     );
 
   /*
@@ -458,7 +486,7 @@ export async function persistTask(
    * planTask() creates the execution plan.
    */
   await saveTaskStepsToSupabase(
-    task
+    normalizedTask
   );
 
   return {
@@ -466,7 +494,7 @@ export async function persistTask(
 
     steps:
       normalizeTaskSteps(
-        task.steps
+        normalizedTask.steps
       )
   };
 }
