@@ -672,6 +672,7 @@ async function loadOpportunityById(
 // LOAD TASK
 // =====================================
 
+
 async function loadTask(
   id,
   ownerId = null
@@ -705,27 +706,7 @@ async function loadTask(
   }
 
   return task;
-
-  }
-
-  if (!task) {
-    task =
-      taskStore.get(id);
-  }
-
-  if (
-    task &&
-    ownerId &&
-    task.ownerId &&
-    task.ownerId !==
-      ownerId
-  ) {
-    return null;
-  }
-
-  return task;
 }
-
 // =====================================
 // SAFE SUBMISSION PERSISTENCE
 // =====================================
