@@ -118,60 +118,122 @@ export async function saveTaskToSupabase(
       task.payment || null
   };
 
-  let {
-    data,
-    error
-  } = await client
-    .from("ai_tasks")
-    .upsert(
-      taskData,
-      {
-        onConflict:
-          "id"
-      }
-    )
-    .select()
-    .single();
+  let payload = {
+    ...taskData
+  };
+
+  let result =
+    await client
+      .from("ai_tasks")
+      .upsert(
+        payload,
+        {
+          onConflict:
+            "id"
+        }
+      )
+      .select()
+      .single();
 
   // ==========================================================
   // SCHEMA CACHE FALLBACK
   // ==========================================================
   //
-  // If the deployed PostgREST schema cache is temporarily
-  // missing approved_by, retry the same operation without
-  // approved_by instead of failing the whole task.
+  // PostgREST can temporarily report a real database column
+  // as missing from its schema cache.
   //
-  // approved_by remains in the normal payload and will be
-  // saved automatically once the schema cache is healthy.
+  // Instead of removing a particular field permanently, detect
+  // the field named in the error and retry without only that
+  // field. All other task fields remain unchanged.
+  //
+  // This handles errors such as:
+  //
+  // Could not find the 'approved_by' column of 'ai_tasks'
+  // in the schema cache
+  //
+  // Could not find the 'completion' column of 'ai_tasks'
+  // in the schema cache
   // ==========================================================
 
-  const approvedBySchemaCacheError =
-    error &&
-    (
-      error.code === "PGRST204" ||
-      error.code === "PGRST205"
-    ) &&
-    typeof error.message === "string" &&
-    error.message.includes(
-      "approved_by"
-    ) &&
-    error.message.includes(
-      "schema cache"
+  const omittedFields =
+    new Set();
+
+  for (
+    let attempt = 0;
+    attempt < 10;
+    attempt += 1
+  ) {
+    const error =
+      result.error;
+
+    const isSchemaCacheError =
+      error &&
+      (
+        error.code ===
+          "PGRST204" ||
+        error.code ===
+          "PGRST205"
+      ) &&
+      typeof error.message ===
+        "string" &&
+      error.message.includes(
+        "schema cache"
+      );
+
+    if (
+      !isSchemaCacheError
+    ) {
+      break;
+    }
+
+    const fieldMatch =
+      error.message.match(
+        /'([^']+)'\s+column/i
+      );
+
+    const missingField =
+      fieldMatch?.[1];
+
+    if (
+      !missingField
+    ) {
+      break;
+    }
+
+    if (
+      !(missingField in payload)
+    ) {
+      break;
+    }
+
+    if (
+      omittedFields.has(
+        missingField
+      )
+    ) {
+      break;
+    }
+
+    omittedFields.add(
+      missingField
     );
 
-  if (
-    approvedBySchemaCacheError
-  ) {
-    const {
-      approved_by,
-      ...fallbackTaskData
-    } = taskData;
+    const nextPayload = {
+      ...payload
+    };
 
-    const fallbackResult =
+    delete nextPayload[
+      missingField
+    ];
+
+    payload =
+      nextPayload;
+
+    result =
       await client
         .from("ai_tasks")
         .upsert(
-          fallbackTaskData,
+          payload,
           {
             onConflict:
               "id"
@@ -179,19 +241,13 @@ export async function saveTaskToSupabase(
         )
         .select()
         .single();
-
-    data =
-      fallbackResult.data;
-
-    error =
-      fallbackResult.error;
   }
 
-  if (error) {
-    throw error;
+  if (result.error) {
+    throw result.error;
   }
 
-  return data;
+  return result.data;
 }
 
 // ============================================================
