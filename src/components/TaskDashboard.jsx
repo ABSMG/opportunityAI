@@ -474,15 +474,160 @@ export default function TaskDashboard() {
    * authenticated user and enforce ownership.
    */
 
-  const request = async (
-    url,
-    options = {}
-  ) => {
-    if (!supabase) {
+const request = async (
+  url,
+  options = {}
+) => {
+  if (!supabase) {
+    throw new Error(
+      "Supabase authentication is not configured."
+    );
+  }
+
+  let {
+    data: sessionData,
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    throw sessionError;
+  }
+
+  let session = sessionData?.session || null;
+
+  // If the current session/token is expired,
+  // explicitly refresh it before calling the backend.
+  if (!session?.access_token) {
+    const {
+      data: refreshedData,
+      error: refreshError,
+    } = await supabase.auth.refreshSession();
+
+    if (refreshError) {
+      setSession(null);
+
       throw new Error(
-        "Supabase authentication is not configured."
+        "Your login session has expired. Please log in again."
       );
     }
+
+    session =
+      refreshedData?.session || null;
+
+    if (!session?.access_token) {
+      setSession(null);
+
+      throw new Error(
+        "Authentication required. Please log in again."
+      );
+    }
+
+    setSession(session);
+  }
+
+  const accessToken =
+    session.access_token;
+
+  const {
+    headers: optionHeaders = {},
+    ...requestOptions
+  } = options;
+
+  const response = await fetch(
+    `${API_BASE}${url}`,
+    {
+      ...requestOptions,
+
+      headers: {
+        "Content-Type":
+          "application/json",
+
+        Authorization:
+          `Bearer ${accessToken}`,
+
+        ...optionHeaders,
+      },
+    }
+  );
+
+  const responseData =
+    await response
+      .json()
+      .catch(() => ({}));
+
+  // If backend rejects the token, refresh once
+  // and retry the same request with the new token.
+  if (
+    response.status === 401 &&
+    !options.__authRetry
+  ) {
+    const {
+      data: refreshedData,
+      error: refreshError,
+    } = await supabase.auth.refreshSession();
+
+    if (!refreshError && refreshedData?.session) {
+      const refreshedSession =
+        refreshedData.session;
+
+      setSession(refreshedSession);
+
+      const {
+        headers: retryHeaders = {},
+        ...retryOptions
+      } = options;
+
+      const retryResponse =
+        await fetch(
+          `${API_BASE}${url}`,
+          {
+            ...retryOptions,
+
+            headers: {
+              "Content-Type":
+                "application/json",
+
+              Authorization:
+                `Bearer ${refreshedSession.access_token}`,
+
+              ...retryHeaders,
+            },
+          }
+        );
+
+      const retryData =
+        await retryResponse
+          .json()
+          .catch(() => ({}));
+
+      if (!retryResponse.ok) {
+        throw new Error(
+          retryData.error ||
+            retryData.message ||
+            `Request failed (${retryResponse.status})`
+        );
+      }
+
+      return retryData;
+    }
+
+    setSession(null);
+
+    throw new Error(
+      "Your login session has expired. Please log in again."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      responseData.error ||
+        responseData.message ||
+        `Request failed (${response.status})`
+    );
+  }
+
+  return responseData;
+};  
 
     const {
       data,
