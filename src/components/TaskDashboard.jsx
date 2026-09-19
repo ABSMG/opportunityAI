@@ -17,7 +17,10 @@ const SUPABASE_KEY =
 
 const supabase =
   SUPABASE_URL && SUPABASE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_KEY)
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY
+      )
     : null;
 
 const STATUS_LABELS = {
@@ -43,7 +46,9 @@ const STATUS_CLASS = {
 };
 
 const isValidHttpUrl = (value) => {
-  if (!value || typeof value !== "string") return false;
+  if (!value || typeof value !== "string") {
+    return false;
+  }
 
   try {
     const url = new URL(value);
@@ -61,20 +66,26 @@ const getOfficialUrl = (task) => {
   const candidates = [
     task?.officialUrl,
     task?.official_url,
+
     task?.metadata?.officialUrl,
     task?.metadata?.official_url,
     task?.metadata?.officialLink,
     task?.metadata?.official_link,
+
     task?.submission?.officialUrl,
     task?.submission?.official_url,
+
     task?.opportunity?.officialUrl,
     task?.opportunity?.official_url,
     task?.opportunity?.url,
+
     task?.sourceUrl,
     task?.source_url,
   ];
 
-  return candidates.find(isValidHttpUrl) || "";
+  return (
+    candidates.find(isValidHttpUrl) || ""
+  );
 };
 
 const getExpectedPayment = (task) => {
@@ -109,13 +120,40 @@ const getExpectedPayment = (task) => {
       task?.paymentMethod ??
       "",
 
-    status: payment.status || "",
+    status:
+      payment.status || "",
 
     paidAt:
       payment.paidAt ||
       payment.paid_at ||
       "",
   };
+};
+
+const getPaymentEvidenceText = (
+  selectedTask
+) => {
+  const evidence =
+    selectedTask?.payment?.evidence;
+
+  if (!evidence) {
+    return "";
+  }
+
+  if (typeof evidence === "string") {
+    return evidence;
+  }
+
+  if (typeof evidence === "object") {
+    return (
+      evidence.details ||
+      evidence.reference ||
+      evidence.url ||
+      ""
+    );
+  }
+
+  return String(evidence);
 };
 
 export default function TaskDashboard() {
@@ -125,8 +163,11 @@ export default function TaskDashboard() {
    * ================================
    */
 
-  const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [session, setSession] =
+    useState(null);
+
+  const [authLoading, setAuthLoading] =
+    useState(true);
 
   const [authMode, setAuthMode] =
     useState("login");
@@ -140,8 +181,10 @@ export default function TaskDashboard() {
   const [authName, setAuthName] =
     useState("");
 
-  const [authLoadingAction, setAuthLoadingAction] =
-    useState(false);
+  const [
+    authLoadingAction,
+    setAuthLoadingAction,
+  ] = useState(false);
 
   const [authMessage, setAuthMessage] =
     useState("");
@@ -155,9 +198,11 @@ export default function TaskDashboard() {
   useEffect(() => {
     if (!supabase) {
       setAuthLoading(false);
+
       setAuthError(
-        "Supabase authentication is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to the frontend environment."
+        "Supabase authentication is not configured. Add VITE_SUPABASE_URL and a Supabase anon/publishable key to the frontend environment."
       );
+
       return;
     }
 
@@ -175,7 +220,9 @@ export default function TaskDashboard() {
         }
 
         if (mounted) {
-          setSession(data?.session || null);
+          setSession(
+            data?.session || null
+          );
         }
       } catch (error) {
         if (mounted) {
@@ -195,21 +242,27 @@ export default function TaskDashboard() {
 
     const {
       data: listener,
-    } = supabase.auth.onAuthStateChange(
-      (_event, nextSession) => {
-        if (!mounted) return;
+    } =
+      supabase.auth.onAuthStateChange(
+        (_event, nextSession) => {
+          if (!mounted) {
+            return;
+          }
 
-        setSession(nextSession || null);
+          setSession(
+            nextSession || null
+          );
 
-        if (nextSession) {
-          setAuthError("");
-          setAuthMessage("");
+          if (nextSession) {
+            setAuthError("");
+            setAuthMessage("");
+          }
         }
-      }
-    );
+      );
 
     return () => {
       mounted = false;
+
       listener?.subscription?.unsubscribe();
     };
   }, []);
@@ -217,20 +270,27 @@ export default function TaskDashboard() {
   /*
    * Login
    */
-  const handleLogin = async (event) => {
+  const handleLogin = async (
+    event
+  ) => {
     event.preventDefault();
 
     if (!supabase) {
       setAuthError(
         "Supabase authentication is not configured."
       );
+
       return;
     }
 
-    if (!authEmail.trim() || !authPassword) {
+    if (
+      !authEmail.trim() ||
+      !authPassword
+    ) {
       setAuthError(
         "Enter your email and password."
       );
+
       return;
     }
 
@@ -242,16 +302,25 @@ export default function TaskDashboard() {
       const {
         data,
         error,
-      } = await supabase.auth.signInWithPassword({
-        email: authEmail.trim(),
-        password: authPassword,
-      });
+      } =
+        await supabase.auth.signInWithPassword(
+          {
+            email:
+              authEmail.trim(),
+
+            password:
+              authPassword,
+          }
+        );
 
       if (error) {
         throw error;
       }
 
-      setSession(data?.session || null);
+      setSession(
+        data?.session || null
+      );
+
       setAuthPassword("");
 
       setAuthMessage(
@@ -270,23 +339,32 @@ export default function TaskDashboard() {
   /*
    * Register
    */
-  const handleRegister = async (event) => {
+  const handleRegister = async (
+    event
+  ) => {
     event.preventDefault();
 
     if (!supabase) {
       setAuthError(
         "Supabase authentication is not configured."
       );
+
       return;
     }
 
     if (!authName.trim()) {
-      setAuthError("Enter your name.");
+      setAuthError(
+        "Enter your name."
+      );
+
       return;
     }
 
     if (!authEmail.trim()) {
-      setAuthError("Enter your email.");
+      setAuthError(
+        "Enter your email."
+      );
+
       return;
     }
 
@@ -294,6 +372,7 @@ export default function TaskDashboard() {
       setAuthError(
         "Password must be at least 6 characters."
       );
+
       return;
     }
 
@@ -305,23 +384,32 @@ export default function TaskDashboard() {
       const {
         data,
         error,
-      } = await supabase.auth.signUp({
-        email: authEmail.trim(),
-        password: authPassword,
-        options: {
-          data: {
-            full_name: authName.trim(),
+      } =
+        await supabase.auth.signUp({
+          email:
+            authEmail.trim(),
+
+          password:
+            authPassword,
+
+          options: {
+            data: {
+              full_name:
+                authName.trim(),
+            },
+
+            emailRedirectTo:
+              window.location.origin,
           },
-          emailRedirectTo:
-            window.location.origin,
-        },
-      });
+        });
 
       if (error) {
         throw error;
       }
 
-      setSession(data?.session || null);
+      setSession(
+        data?.session || null
+      );
 
       if (data?.session) {
         setAuthMessage(
@@ -350,7 +438,9 @@ export default function TaskDashboard() {
    * Logout
    */
   const handleLogout = async () => {
-    if (!supabase) return;
+    if (!supabase) {
+      return;
+    }
 
     setAuthLoadingAction(true);
     setAuthError("");
@@ -359,7 +449,8 @@ export default function TaskDashboard() {
     try {
       const {
         error,
-      } = await supabase.auth.signOut();
+      } =
+        await supabase.auth.signOut();
 
       if (error) {
         throw error;
@@ -384,7 +475,9 @@ export default function TaskDashboard() {
    * ================================
    */
 
-  const [title, setTitle] = useState("");
+  const [title, setTitle] =
+    useState("");
+
   const [description, setDescription] =
     useState("");
 
@@ -403,8 +496,10 @@ export default function TaskDashboard() {
   const [tasksLoading, setTasksLoading] =
     useState(true);
 
-  const [actionLoading, setActionLoading] =
-    useState("");
+  const [
+    actionLoading,
+    setActionLoading,
+  ] = useState("");
 
   const [error, setError] =
     useState("");
@@ -456,16 +551,6 @@ export default function TaskDashboard() {
    * ================================
    * AUTHENTICATED API REQUEST
    * ================================
-   *
-   * FIXED:
-   * There is ONLY ONE request() function.
-   *
-   * It:
-   * 1. Reads the current Supabase session.
-   * 2. Refreshes an expired/missing session.
-   * 3. Sends the access token to the backend.
-   * 4. If backend returns 401, refreshes once.
-   * 5. Retries the request once.
    */
 
   const request = async (
@@ -481,7 +566,8 @@ export default function TaskDashboard() {
     let {
       data: sessionData,
       error: sessionError,
-    } = await supabase.auth.getSession();
+    } =
+      await supabase.auth.getSession();
 
     if (sessionError) {
       throw sessionError;
@@ -490,11 +576,14 @@ export default function TaskDashboard() {
     let currentSession =
       sessionData?.session || null;
 
-    if (!currentSession?.access_token) {
+    if (
+      !currentSession?.access_token
+    ) {
       const {
         data: refreshedData,
         error: refreshError,
-      } = await supabase.auth.refreshSession();
+      } =
+        await supabase.auth.refreshSession();
 
       if (refreshError) {
         setSession(null);
@@ -507,7 +596,9 @@ export default function TaskDashboard() {
       currentSession =
         refreshedData?.session || null;
 
-      if (!currentSession?.access_token) {
+      if (
+        !currentSession?.access_token
+      ) {
         setSession(null);
 
         throw new Error(
@@ -515,7 +606,9 @@ export default function TaskDashboard() {
         );
       }
 
-      setSession(currentSession);
+      setSession(
+        currentSession
+      );
     }
 
     const accessToken =
@@ -527,22 +620,23 @@ export default function TaskDashboard() {
       ...requestOptions
     } = options;
 
-    const response = await fetch(
-      `${API_BASE}${url}`,
-      {
-        ...requestOptions,
+    const response =
+      await fetch(
+        `${API_BASE}${url}`,
+        {
+          ...requestOptions,
 
-        headers: {
-          "Content-Type":
-            "application/json",
+          headers: {
+            "Content-Type":
+              "application/json",
 
-          Authorization:
-            `Bearer ${accessToken}`,
+            Authorization:
+              `Bearer ${accessToken}`,
 
-          ...optionHeaders,
-        },
-      }
-    );
+            ...optionHeaders,
+          },
+        }
+      );
 
     const responseData =
       await response
@@ -550,8 +644,7 @@ export default function TaskDashboard() {
         .catch(() => ({}));
 
     /*
-     * If Supabase/backend says the token is
-     * invalid or expired, refresh once.
+     * Refresh once after a backend 401.
      */
     if (
       response.status === 401 &&
@@ -560,7 +653,8 @@ export default function TaskDashboard() {
       const {
         data: refreshedData,
         error: refreshError,
-      } = await supabase.auth.refreshSession();
+      } =
+        await supabase.auth.refreshSession();
 
       if (
         !refreshError &&
@@ -569,12 +663,17 @@ export default function TaskDashboard() {
         const refreshedSession =
           refreshedData.session;
 
-        setSession(refreshedSession);
+        setSession(
+          refreshedSession
+        );
 
-        return request(url, {
-          ...options,
-          __authRetry: true,
-        });
+        return request(
+          url,
+          {
+            ...options,
+            __authRetry: true,
+          }
+        );
       }
 
       setSession(null);
@@ -596,8 +695,11 @@ export default function TaskDashboard() {
   };
 
   /*
-   * Load tasks directly through backend.
+   * ================================
+   * LOAD TASKS
+   * ================================
    */
+
   const loadTasks = async (
     selectedTaskId = null
   ) => {
@@ -605,6 +707,7 @@ export default function TaskDashboard() {
       setTasks([]);
       setTask(null);
       setTasksLoading(false);
+
       return;
     }
 
@@ -613,65 +716,95 @@ export default function TaskDashboard() {
 
     try {
       const data =
-        await request("/api/tasks");
+        await request(
+          "/api/tasks"
+        );
 
       const loadedTasks =
-        Array.isArray(data.tasks)
+        Array.isArray(
+          data.tasks
+        )
           ? data.tasks
           : [];
 
-      setTasks(loadedTasks);
+      setTasks(
+        loadedTasks
+      );
 
-      if (loadedTasks.length > 0) {
-        setTask((currentTask) => {
-          const preferredId =
-            selectedTaskId ||
-            currentTask?.id ||
-            null;
+      if (
+        loadedTasks.length >
+        0
+      ) {
+        setTask(
+          (currentTask) => {
+            const preferredId =
+              selectedTaskId ||
+              currentTask?.id ||
+              null;
 
-          if (preferredId) {
-            const matchingTask =
-              loadedTasks.find(
-                (savedTask) =>
-                  savedTask.id ===
-                  preferredId
-              );
+            if (preferredId) {
+              const matchingTask =
+                loadedTasks.find(
+                  (savedTask) =>
+                    savedTask.id ===
+                    preferredId
+                );
 
-            if (matchingTask) {
-              return matchingTask;
+              if (matchingTask) {
+                return matchingTask;
+              }
             }
-          }
 
-          return (
-            currentTask ||
-            loadedTasks[0]
-          );
-        });
-      } else {
-        setTask((currentTask) =>
-          currentTask?.id
-            ? currentTask
-            : null
+            return (
+              currentTask ||
+              loadedTasks[0]
+            );
+          }
         );
+      } else {
+        /*
+         * Important:
+         * Never keep displaying a task that
+         * no longer exists in the backend.
+         */
+        setTask(null);
       }
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to load tasks."
+      );
     } finally {
       setTasksLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!authLoading && session) {
+    if (
+      !authLoading &&
+      session
+    ) {
       loadTasks();
     }
 
-    if (!authLoading && !session) {
+    if (
+      !authLoading &&
+      !session
+    ) {
       setTasks([]);
       setTask(null);
       setTasksLoading(false);
     }
-  }, [session, authLoading]);
+  }, [
+    session,
+    authLoading,
+  ]);
+
+  /*
+   * ================================
+   * FIELD SYNCHRONIZATION
+   * ================================
+   */
 
   const syncPaymentFields =
     (selectedTask) => {
@@ -681,53 +814,70 @@ export default function TaskDashboard() {
         );
 
       setPaymentAmount(
-        payment.amount !== undefined &&
-          payment.amount !== null
-          ? String(payment.amount)
+        payment.amount !==
+          undefined &&
+          payment.amount !==
+            null
+          ? String(
+              payment.amount
+            )
           : ""
       );
 
       setPaymentCurrency(
-        payment.currency || ""
+        payment.currency ||
+          ""
       );
 
       setPaymentProvider(
-        payment.provider || ""
+        payment.provider ||
+          ""
       );
 
       setPaymentMethod(
-        payment.method || ""
+        payment.method ||
+          ""
       );
 
       setPaymentReference(
-        selectedTask?.payment
+        selectedTask
+          ?.payment
           ?.providerReference ||
-          selectedTask?.payment
+          selectedTask
+            ?.payment
             ?.provider_reference ||
           ""
       );
 
       setPaymentEvidence(
-        selectedTask?.payment
-          ?.evidence?.url ||
-          selectedTask?.payment
-            ?.evidence ||
-          ""
+        getPaymentEvidenceText(
+          selectedTask
+        )
       );
     };
 
   const syncSubmissionFields =
     (selectedTask) => {
       setSubmissionReference(
-        selectedTask?.submission
-          ?.reference || ""
+        selectedTask
+          ?.submission
+          ?.reference ||
+          ""
       );
 
       setSubmissionNotes(
-        selectedTask?.submission
-          ?.notes || ""
+        selectedTask
+          ?.submission
+          ?.notes ||
+          ""
       );
     };
+
+  /*
+   * ================================
+   * CREATE TASK
+   * ================================
+   */
 
   const createTask = async () => {
     if (
@@ -737,6 +887,7 @@ export default function TaskDashboard() {
       setError(
         "Please enter both a task title and description."
       );
+
       return;
     }
 
@@ -746,35 +897,46 @@ export default function TaskDashboard() {
 
     try {
       const data =
-        await request("/api/tasks", {
-          method: "POST",
+        await request(
+          "/api/tasks",
+          {
+            method: "POST",
 
-          body: JSON.stringify({
-            title: title.trim(),
-            description:
-              description.trim(),
-            type,
-            source: "OpportunityAI",
-            context: {},
+            body: JSON.stringify({
+              title:
+                title.trim(),
 
-            userProfile: {
-              skills: [
-                "English",
-                "Swahili",
-                "Communication",
-                "Translation",
-                "AI",
-                "Computer",
-                "Internet",
-              ],
-            },
-          }),
-        });
+              description:
+                description.trim(),
+
+              type,
+
+              source:
+                "OpportunityAI",
+
+              context: {},
+
+              userProfile: {
+                skills: [
+                  "English",
+                  "Swahili",
+                  "Communication",
+                  "Translation",
+                  "AI",
+                  "Computer",
+                  "Internet",
+                ],
+              },
+            }),
+          }
+        );
 
       const createdTask =
         data.task || data;
 
-      setTask(createdTask);
+      setTask(
+        createdTask
+      );
 
       syncPaymentFields(
         createdTask
@@ -785,7 +947,8 @@ export default function TaskDashboard() {
       );
 
       await loadTasks(
-        createdTask?.id || null
+        createdTask?.id ||
+          null
       );
 
       setMessage(
@@ -794,20 +957,35 @@ export default function TaskDashboard() {
 
       setTitle("");
       setDescription("");
-      setType("opportunity");
+      setType(
+        "opportunity"
+      );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to create task."
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  /*
+   * ================================
+   * SELECT TASK
+   * ================================
+   */
+
   const selectTask = async (
     selectedTask
   ) => {
-    if (!selectedTask?.id) return;
+    if (!selectedTask?.id) {
+      return;
+    }
 
-    setTask(selectedTask);
+    setTask(
+      selectedTask
+    );
 
     syncPaymentFields(
       selectedTask
@@ -829,7 +1007,9 @@ export default function TaskDashboard() {
       const refreshedTask =
         data.task || data;
 
-      setTask(refreshedTask);
+      setTask(
+        refreshedTask
+      );
 
       syncPaymentFields(
         refreshedTask
@@ -850,13 +1030,27 @@ export default function TaskDashboard() {
           )
       );
     } catch (err) {
-      setTask(selectedTask);
-      setError(err.message);
+      setTask(
+        selectedTask
+      );
+
+      setError(
+        err?.message ||
+          "Unable to load selected task."
+      );
     }
   };
 
+  /*
+   * ================================
+   * REFRESH TASK
+   * ================================
+   */
+
   const refreshTask = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
@@ -893,38 +1087,49 @@ export default function TaskDashboard() {
         selectedTaskId
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to refresh task."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * RUN AI TASK
+   * ================================
+   *
+   * IMPORTANT:
+   * Discovery tasks do NOT require an
+   * official URL before execution.
+   *
+   * The AI engine may discover legitimate
+   * opportunities first and attach their
+   * official URLs to the results.
+   *
+   * Official URL is required before manual
+   * external submission, not before discovery.
+   */
+
   const runTask = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
 
     const officialUrl =
-      getOfficialUrl(task);
-
-    if (
-      (task.type ===
-        "opportunity" ||
-        task.type ===
-          "remote_job" ||
-        task.type ===
-          "freelance") &&
-      !officialUrl
-    ) {
-      setError(
-        "This opportunity does not have a valid official website/link yet. Open or add the official source before running it."
+      getOfficialUrl(
+        task
       );
 
-      return;
-    }
+    setActionLoading(
+      "run"
+    );
 
-    setActionLoading("run");
     setError("");
     setMessage("");
 
@@ -937,7 +1142,8 @@ export default function TaskDashboard() {
 
             body: JSON.stringify({
               officialUrl:
-                officialUrl || null,
+                officialUrl ||
+                null,
             }),
           }
         );
@@ -945,7 +1151,9 @@ export default function TaskDashboard() {
       const updatedTask =
         data.task || data;
 
-      setTask(updatedTask);
+      setTask(
+        updatedTask
+      );
 
       syncPaymentFields(
         updatedTask
@@ -963,14 +1171,25 @@ export default function TaskDashboard() {
         "Task executed. Review the result before approving."
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to run AI task."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * APPROVE TASK
+   * ================================
+   */
+
   const approveTask = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
@@ -990,8 +1209,11 @@ export default function TaskDashboard() {
             method: "POST",
 
             body: JSON.stringify({
-              approvedBy: "user",
-              note: "Approved by task owner.",
+              approvedBy:
+                "user",
+
+              note:
+                "Approved by task owner.",
             }),
           }
         );
@@ -999,7 +1221,9 @@ export default function TaskDashboard() {
       const updatedTask =
         data.task || data;
 
-      setTask(updatedTask);
+      setTask(
+        updatedTask
+      );
 
       syncPaymentFields(
         updatedTask
@@ -1017,17 +1241,30 @@ export default function TaskDashboard() {
         "Task approved."
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to approve task."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * MANUAL SUBMISSION
+   * ================================
+   */
+
   const submitTask = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     const officialUrl =
-      getOfficialUrl(task);
+      getOfficialUrl(
+        task
+      );
 
     if (!officialUrl) {
       setError(
@@ -1042,7 +1279,9 @@ export default function TaskDashboard() {
         "Open the official website, review the prepared material, and submit the task yourself. Have you personally completed the external submission?"
       );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
@@ -1087,7 +1326,9 @@ export default function TaskDashboard() {
       const updatedTask =
         data.task || data;
 
-      setTask(updatedTask);
+      setTask(
+        updatedTask
+      );
 
       syncPaymentFields(
         updatedTask
@@ -1105,21 +1346,34 @@ export default function TaskDashboard() {
         "Submission confirmed and saved to your task history."
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to save submission."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * COMPLETE TASK
+   * ================================
+   */
+
   const completeTask = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     const confirmed =
       window.confirm(
         "Confirm that the external task/work has actually been completed or accepted."
       );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
@@ -1154,7 +1408,9 @@ export default function TaskDashboard() {
       const updatedTask =
         data.task || data;
 
-      setTask(updatedTask);
+      setTask(
+        updatedTask
+      );
 
       syncPaymentFields(
         updatedTask
@@ -1172,14 +1428,28 @@ export default function TaskDashboard() {
         "Task completion confirmed and saved."
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to confirm completion."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * RECORD ACTUAL PAYMENT
+   * ================================
+   *
+   * FIX:
+   * Backend endpoint is /pay, not /paid.
+   */
+
   const markPaid = async () => {
-    if (!task?.id) return;
+    if (!task?.id) {
+      return;
+    }
 
     if (
       !paymentAmount ||
@@ -1192,7 +1462,9 @@ export default function TaskDashboard() {
       return;
     }
 
-    if (!paymentCurrency.trim()) {
+    if (
+      !paymentCurrency.trim()
+    ) {
       setError(
         "Enter the payment currency."
       );
@@ -1200,7 +1472,9 @@ export default function TaskDashboard() {
       return;
     }
 
-    if (!paymentProvider.trim()) {
+    if (
+      !paymentProvider.trim()
+    ) {
       setError(
         "Enter the payment provider."
       );
@@ -1208,7 +1482,9 @@ export default function TaskDashboard() {
       return;
     }
 
-    if (!paymentMethod.trim()) {
+    if (
+      !paymentMethod.trim()
+    ) {
       setError(
         "Enter the payment method."
       );
@@ -1216,7 +1492,9 @@ export default function TaskDashboard() {
       return;
     }
 
-    if (!paymentEvidence.trim()) {
+    if (
+      !paymentEvidence.trim()
+    ) {
       setError(
         "Add payment evidence or a reference before recording payment."
       );
@@ -1229,19 +1507,28 @@ export default function TaskDashboard() {
         "Confirm that this payment was actually received and that the information you entered is accurate."
       );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     const selectedTaskId =
       task.id;
 
-    setActionLoading("paid");
+    setActionLoading(
+      "paid"
+    );
+
     setError("");
     setMessage("");
 
     try {
+      /*
+       * Backend uses:
+       * POST /api/tasks/:id/pay
+       */
       const data =
         await request(
-          `/api/tasks/${selectedTaskId}/paid`,
+          `/api/tasks/${selectedTaskId}/pay`,
           {
             method: "POST",
 
@@ -1291,7 +1578,9 @@ export default function TaskDashboard() {
       const updatedTask =
         data.task || data;
 
-      setTask(updatedTask);
+      setTask(
+        updatedTask
+      );
 
       syncPaymentFields(
         updatedTask
@@ -1309,20 +1598,37 @@ export default function TaskDashboard() {
         "Actual payment has been recorded in the task history."
       );
     } catch (err) {
-      setError(err.message);
+      setError(
+        err?.message ||
+          "Unable to record payment."
+      );
     } finally {
       setActionLoading("");
     }
   };
 
+  /*
+   * ================================
+   * RESET
+   * ================================
+   */
+
   const resetTask = () => {
     setTask(null);
+
     setTitle("");
     setDescription("");
-    setType("opportunity");
+    setType(
+      "opportunity"
+    );
 
-    setSubmissionReference("");
-    setSubmissionNotes("");
+    setSubmissionReference(
+      ""
+    );
+
+    setSubmissionNotes(
+      ""
+    );
 
     setPaymentAmount("");
     setPaymentCurrency("");
@@ -1335,33 +1641,55 @@ export default function TaskDashboard() {
     setMessage("");
   };
 
+  /*
+   * ================================
+   * DERIVED DATA
+   * ================================
+   */
+
   const automation = Number(
-    task?.automationPercentage ?? 0
+    task?.automationPercentage ??
+      0
   );
 
   const status =
-    task?.status || "QUEUED";
+    task?.status ||
+    "QUEUED";
 
   const officialUrl =
     useMemo(
-      () => getOfficialUrl(task),
+      () =>
+        getOfficialUrl(
+          task
+        ),
       [task]
     );
 
   const expectedPayment =
     useMemo(
-      () => getExpectedPayment(task),
+      () =>
+        getExpectedPayment(
+          task
+        ),
       [task]
     );
 
   const completedSteps =
-    Array.isArray(task?.steps)
+    Array.isArray(
+      task?.steps
+    )
       ? task.steps.filter(
           (step) =>
             step.status ===
             "COMPLETED"
         ).length
       : 0;
+
+  /*
+   * ================================
+   * AUTH LOADING
+   * ================================
+   */
 
   if (authLoading) {
     return (
@@ -1403,6 +1731,12 @@ export default function TaskDashboard() {
     );
   }
 
+  /*
+   * ================================
+   * LOGIN / REGISTER
+   * ================================
+   */
+
   if (!session) {
     return (
       <section className="task-dashboard">
@@ -1443,7 +1777,8 @@ export default function TaskDashboard() {
                 : handleRegister
             }
           >
-            {authMode === "register" && (
+            {authMode ===
+              "register" && (
               <>
                 <label>
                   Full name
@@ -1452,9 +1787,12 @@ export default function TaskDashboard() {
                 <input
                   type="text"
                   value={authName}
-                  onChange={(event) =>
+                  onChange={(
+                    event
+                  ) =>
                     setAuthName(
-                      event.target.value
+                      event.target
+                        .value
                     )
                   }
                   placeholder="Your full name"
@@ -1470,9 +1808,12 @@ export default function TaskDashboard() {
             <input
               type="email"
               value={authEmail}
-              onChange={(event) =>
+              onChange={(
+                event
+              ) =>
                 setAuthEmail(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
               placeholder="you@example.com"
@@ -1486,14 +1827,18 @@ export default function TaskDashboard() {
             <input
               type="password"
               value={authPassword}
-              onChange={(event) =>
+              onChange={(
+                event
+              ) =>
                 setAuthPassword(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
               placeholder="At least 6 characters"
               autoComplete={
-                authMode === "login"
+                authMode ===
+                "login"
                   ? "current-password"
                   : "new-password"
               }
@@ -1507,17 +1852,20 @@ export default function TaskDashboard() {
               }
             >
               {authLoadingAction
-                ? authMode === "login"
+                ? authMode ===
+                  "login"
                   ? "Logging in..."
                   : "Creating account..."
-                : authMode === "login"
+                : authMode ===
+                  "login"
                 ? "Login"
                 : "Create Account"}
             </button>
           </form>
 
           <div className="auth-switch">
-            {authMode === "login"
+            {authMode ===
+            "login"
               ? "Don't have an account?"
               : "Already have an account?"}
 
@@ -1525,7 +1873,8 @@ export default function TaskDashboard() {
               type="button"
               onClick={() => {
                 setAuthMode(
-                  authMode === "login"
+                  authMode ===
+                    "login"
                     ? "register"
                     : "login"
                 );
@@ -1534,7 +1883,8 @@ export default function TaskDashboard() {
                 setAuthMessage("");
               }}
             >
-              {authMode === "login"
+              {authMode ===
+              "login"
                 ? "Register"
                 : "Login"}
             </button>
@@ -1645,6 +1995,12 @@ export default function TaskDashboard() {
     );
   }
 
+  /*
+   * ================================
+   * AUTHENTICATED DASHBOARD
+   * ================================
+   */
+
   return (
     <section className="task-dashboard">
       <div className="task-dashboard-header">
@@ -1688,7 +2044,9 @@ export default function TaskDashboard() {
 
           <button
             className="logout-button"
-            onClick={handleLogout}
+            onClick={
+              handleLogout
+            }
             disabled={
               authLoadingAction
             }
@@ -1713,12 +2071,15 @@ export default function TaskDashboard() {
           <input
             type="text"
             value={title}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setTitle(
-                event.target.value
+                event.target
+                  .value
               )
             }
-            placeholder="Example: Prepare a freelance proposal"
+            placeholder="Example: Find legitimate paid remote writing opportunities"
           />
 
           <label>
@@ -1727,9 +2088,12 @@ export default function TaskDashboard() {
 
           <textarea
             value={description}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setDescription(
-                event.target.value
+                event.target
+                  .value
               )
             }
             placeholder="Describe exactly what you want OpportunityAI to do..."
@@ -1742,9 +2106,12 @@ export default function TaskDashboard() {
 
           <select
             value={type}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setType(
-                event.target.value
+                event.target
+                  .value
               )
             }
           >
@@ -1771,8 +2138,12 @@ export default function TaskDashboard() {
 
           <button
             className="primary-button task-create-button"
-            onClick={createTask}
-            disabled={loading}
+            onClick={
+              createTask
+            }
+            disabled={
+              loading
+            }
           >
             {loading
               ? "Creating..."
@@ -1800,7 +2171,9 @@ export default function TaskDashboard() {
 
             <div className="task-list">
               {tasks.map(
-                (savedTask) => {
+                (
+                  savedTask
+                ) => {
                   const savedStatus =
                     savedTask.status ||
                     "QUEUED";
@@ -1898,7 +2271,9 @@ export default function TaskDashboard() {
                   </span>
 
                   <a
-                    href={officialUrl}
+                    href={
+                      officialUrl
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -1941,7 +2316,8 @@ export default function TaskDashboard() {
                 {Array.isArray(
                   task.steps
                 )
-                  ? task.steps.length
+                  ? task.steps
+                      .length
                   : 0}
               </strong>
             </div>
@@ -2168,13 +2544,15 @@ export default function TaskDashboard() {
               </div>
 
               <h3>
-                {task.qualityCheck
+                {task
+                  .qualityCheck
                   .passed
                   ? "✓ Quality check passed"
                   : "⚠ Quality review required"}
               </h3>
 
-              {task.qualityCheck
+              {task
+                .qualityCheck
                 .summary && (
                 <p>
                   {
@@ -2186,10 +2564,12 @@ export default function TaskDashboard() {
               )}
 
               {Array.isArray(
-                task.qualityCheck
+                task
+                  .qualityCheck
                   .issues
               ) &&
-                task.qualityCheck
+                task
+                  .qualityCheck
                   .issues.length >
                   0 && (
                   <ul>
@@ -2232,7 +2612,9 @@ export default function TaskDashboard() {
 
               <a
                 className="primary-button"
-                href={officialUrl}
+                href={
+                  officialUrl
+                }
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -2285,8 +2667,7 @@ export default function TaskDashboard() {
                   event
                 ) =>
                   setSubmissionReference(
-                    event
-                      .target
+                    event.target
                       .value
                   )
                 }
@@ -2305,8 +2686,7 @@ export default function TaskDashboard() {
                   event
                 ) =>
                   setSubmissionNotes(
-                    event
-                      .target
+                    event.target
                       .value
                   )
                 }
@@ -2369,8 +2749,7 @@ export default function TaskDashboard() {
                       event
                     ) =>
                       setPaymentAmount(
-                        event
-                          .target
+                        event.target
                           .value
                       )
                     }
@@ -2392,8 +2771,7 @@ export default function TaskDashboard() {
                       event
                     ) =>
                       setPaymentCurrency(
-                        event
-                          .target
+                        event.target
                           .value
                       )
                     }
@@ -2415,8 +2793,7 @@ export default function TaskDashboard() {
                       event
                     ) =>
                       setPaymentProvider(
-                        event
-                          .target
+                        event.target
                           .value
                       )
                     }
@@ -2438,8 +2815,7 @@ export default function TaskDashboard() {
                       event
                     ) =>
                       setPaymentMethod(
-                        event
-                          .target
+                        event.target
                           .value
                       )
                     }
@@ -2461,8 +2837,7 @@ export default function TaskDashboard() {
                   event
                 ) =>
                   setPaymentReference(
-                    event
-                      .target
+                    event.target
                       .value
                   )
                 }
@@ -2481,8 +2856,7 @@ export default function TaskDashboard() {
                   event
                 ) =>
                   setPaymentEvidence(
-                    event
-                      .target
+                    event.target
                       .value
                   )
                 }
