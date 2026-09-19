@@ -252,7 +252,6 @@ export default function TaskDashboard() {
       }
 
       setSession(data?.session || null);
-
       setAuthPassword("");
 
       setAuthMessage(
@@ -413,9 +412,6 @@ export default function TaskDashboard() {
   const [message, setMessage] =
     useState("");
 
-  /*
-   * Submission details.
-   */
   const [
     submissionReference,
     setSubmissionReference,
@@ -426,9 +422,6 @@ export default function TaskDashboard() {
     setSubmissionNotes,
   ] = useState("");
 
-  /*
-   * Payment details.
-   */
   const [
     paymentAmount,
     setPaymentAmount,
@@ -464,173 +457,29 @@ export default function TaskDashboard() {
    * AUTHENTICATED API REQUEST
    * ================================
    *
-   * This is the important fix.
+   * FIXED:
+   * There is ONLY ONE request() function.
    *
-   * Every protected backend request receives:
-   *
-   * Authorization: Bearer <Supabase access token>
-   *
-   * The backend can therefore identify the
-   * authenticated user and enforce ownership.
+   * It:
+   * 1. Reads the current Supabase session.
+   * 2. Refreshes an expired/missing session.
+   * 3. Sends the access token to the backend.
+   * 4. If backend returns 401, refreshes once.
+   * 5. Retries the request once.
    */
 
-const request = async (
-  url,
-  options = {}
-) => {
-  if (!supabase) {
-    throw new Error(
-      "Supabase authentication is not configured."
-    );
-  }
-
-  let {
-    data: sessionData,
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    throw sessionError;
-  }
-
-  let session = sessionData?.session || null;
-
-  // If the current session/token is expired,
-  // explicitly refresh it before calling the backend.
-  if (!session?.access_token) {
-    const {
-      data: refreshedData,
-      error: refreshError,
-    } = await supabase.auth.refreshSession();
-
-    if (refreshError) {
-      setSession(null);
-
+  const request = async (
+    url,
+    options = {}
+  ) => {
+    if (!supabase) {
       throw new Error(
-        "Your login session has expired. Please log in again."
+        "Supabase authentication is not configured."
       );
     }
 
-    session =
-      refreshedData?.session || null;
-
-    if (!session?.access_token) {
-      setSession(null);
-
-      throw new Error(
-        "Authentication required. Please log in again."
-      );
-    }
-
-    setSession(session);
-  }
-
-  const accessToken =
-    session.access_token;
-
-  const {
-    headers: optionHeaders = {},
-    ...requestOptions
-  } = options;
-
-  const response = await fetch(
-    `${API_BASE}${url}`,
-    {
-      ...requestOptions,
-
-      headers: {
-        "Content-Type":
-          "application/json",
-
-        Authorization:
-          `Bearer ${accessToken}`,
-
-        ...optionHeaders,
-      },
-    }
-  );
-
-  const responseData =
-    await response
-      .json()
-      .catch(() => ({}));
-
-  // If backend rejects the token, refresh once
-  // and retry the same request with the new token.
-  if (
-    response.status === 401 &&
-    !options.__authRetry
-  ) {
-    const {
-      data: refreshedData,
-      error: refreshError,
-    } = await supabase.auth.refreshSession();
-
-    if (!refreshError && refreshedData?.session) {
-      const refreshedSession =
-        refreshedData.session;
-
-      setSession(refreshedSession);
-
-      const {
-        headers: retryHeaders = {},
-        ...retryOptions
-      } = options;
-
-      const retryResponse =
-        await fetch(
-          `${API_BASE}${url}`,
-          {
-            ...retryOptions,
-
-            headers: {
-              "Content-Type":
-                "application/json",
-
-              Authorization:
-                `Bearer ${refreshedSession.access_token}`,
-
-              ...retryHeaders,
-            },
-          }
-        );
-
-      const retryData =
-        await retryResponse
-          .json()
-          .catch(() => ({}));
-
-      if (!retryResponse.ok) {
-        throw new Error(
-          retryData.error ||
-            retryData.message ||
-            `Request failed (${retryResponse.status})`
-        );
-      }
-
-      return retryData;
-    }
-
-    setSession(null);
-
-    throw new Error(
-      "Your login session has expired. Please log in again."
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      responseData.error ||
-        responseData.message ||
-        `Request failed (${response.status})`
-    );
-  }
-
-  return responseData;
-};  
-
-    const {
-      data,
+    let {
+      data: sessionData,
       error: sessionError,
     } = await supabase.auth.getSession();
 
@@ -638,19 +487,43 @@ const request = async (
       throw sessionError;
     }
 
-    const accessToken =
-      data?.session?.access_token;
+    let currentSession =
+      sessionData?.session || null;
 
-    if (!accessToken) {
-      setSession(null);
+    if (!currentSession?.access_token) {
+      const {
+        data: refreshedData,
+        error: refreshError,
+      } = await supabase.auth.refreshSession();
 
-      throw new Error(
-        "Authentication required. Please log in."
-      );
+      if (refreshError) {
+        setSession(null);
+
+        throw new Error(
+          "Your login session has expired. Please log in again."
+        );
+      }
+
+      currentSession =
+        refreshedData?.session || null;
+
+      if (!currentSession?.access_token) {
+        setSession(null);
+
+        throw new Error(
+          "Authentication required. Please log in again."
+        );
+      }
+
+      setSession(currentSession);
     }
+
+    const accessToken =
+      currentSession.access_token;
 
     const {
       headers: optionHeaders = {},
+      __authRetry,
       ...requestOptions
     } = options;
 
@@ -675,6 +548,41 @@ const request = async (
       await response
         .json()
         .catch(() => ({}));
+
+    /*
+     * If Supabase/backend says the token is
+     * invalid or expired, refresh once.
+     */
+    if (
+      response.status === 401 &&
+      !__authRetry
+    ) {
+      const {
+        data: refreshedData,
+        error: refreshError,
+      } = await supabase.auth.refreshSession();
+
+      if (
+        !refreshError &&
+        refreshedData?.session
+      ) {
+        const refreshedSession =
+          refreshedData.session;
+
+        setSession(refreshedSession);
+
+        return request(url, {
+          ...options,
+          __authRetry: true,
+        });
+      }
+
+      setSession(null);
+
+      throw new Error(
+        "Your login session has expired. Please log in again."
+      );
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -753,9 +661,6 @@ const request = async (
     }
   };
 
-  /*
-   * Reload tasks after authentication.
-   */
   useEffect(() => {
     if (!authLoading && session) {
       loadTasks();
@@ -768,9 +673,6 @@ const request = async (
     }
   }, [session, authLoading]);
 
-  /*
-   * Keep payment fields synchronized.
-   */
   const syncPaymentFields =
     (selectedTask) => {
       const payment =
@@ -827,13 +729,6 @@ const request = async (
       );
     };
 
-  /*
-   * Create task.
-   *
-   * ownerId is intentionally NOT sent from
-   * the browser. The backend should derive the
-   * owner from the authenticated access token.
-   */
   const createTask = async () => {
     if (
       !title.trim() ||
@@ -1128,9 +1023,6 @@ const request = async (
     }
   };
 
-  /*
-   * REAL MANUAL SUBMISSION FLOW
-   */
   const submitTask = async () => {
     if (!task?.id) return;
 
@@ -1219,9 +1111,6 @@ const request = async (
     }
   };
 
-  /*
-   * Completion remains user-confirmed.
-   */
   const completeTask = async () => {
     if (!task?.id) return;
 
@@ -1289,9 +1178,6 @@ const request = async (
     }
   };
 
-  /*
-   * REAL PAYMENT RECORDING
-   */
   const markPaid = async () => {
     if (!task?.id) return;
 
@@ -1477,12 +1363,6 @@ const request = async (
         ).length
       : 0;
 
-  /*
-   * ================================
-   * AUTH LOADING
-   * ================================
-   */
-
   if (authLoading) {
     return (
       <section className="task-dashboard">
@@ -1522,12 +1402,6 @@ const request = async (
       </section>
     );
   }
-
-  /*
-   * ================================
-   * LOGIN / REGISTER
-   * ================================
-   */
 
   if (!session) {
     return (
@@ -1770,12 +1644,6 @@ const request = async (
       </section>
     );
   }
-
-  /*
-   * ================================
-   * AUTHENTICATED DASHBOARD
-   * ================================
-   */
 
   return (
     <section className="task-dashboard">
@@ -2033,11 +1901,6 @@ const request = async (
                     href={officialUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={() =>
-                      setMessage(
-                        "Official source opened. Review the opportunity carefully before continuing."
-                      )
-                    }
                   >
                     Open Official Website →
                   </a>
@@ -2349,7 +2212,6 @@ const request = async (
             </div>
           )}
 
-          {/* OFFICIAL OPPORTUNITY SOURCE */}
           {officialUrl && (
             <div className="official-source-card">
               <div>
@@ -2379,7 +2241,6 @@ const request = async (
             </div>
           )}
 
-          {/* MANUAL SUBMISSION DETAILS */}
           {status ===
             "APPROVED" && (
             <div className="submission-card">
@@ -2455,7 +2316,6 @@ const request = async (
             </div>
           )}
 
-          {/* PAYMENT RECORD */}
           {status ===
             "COMPLETED" && (
             <div className="payment-card">
